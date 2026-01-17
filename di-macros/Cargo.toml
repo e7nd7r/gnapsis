@@ -1,0 +1,13 @@
+[package]
+name = "di-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Compile-time dependency injection macros for Gnapsis"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "parsing", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
