@@ -58,8 +58,8 @@ thiserror = "1"
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 
-# TOML config
-toml = "0.8"
+# Configuration with layered resolution
+figment = { version = "0.10", features = ["toml", "env"] }
 
 # Config directories
 dirs = "5"
