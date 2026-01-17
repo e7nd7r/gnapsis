@@ -1,0 +1,25 @@
+# Rust
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Config (may contain credentials)
+.gnapsis/
+
+# Logs
+*.log
+
+.trello-vectors.db
