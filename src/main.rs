@@ -1,6 +1,14 @@
 //! Gnapsis - Code Intelligence Graph MCP Server
 
+pub mod config;
+pub mod context;
 pub mod di;
+pub mod error;
+pub mod models;
+pub mod tools;
+
+// Re-export FromRef at crate root for di-macros generated code
+pub use di::FromRef;
 
 use clap::Parser;
 
