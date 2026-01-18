@@ -1,10 +1,15 @@
 //! Application context providing dependency injection root.
 
 use neo4rs::Graph;
+use raggy::embeddings::FastEmbedProvider;
+use raggy::Embedder;
 use std::sync::Arc;
 
 use crate::config::Config;
 use crate::di::Context as ContextDerive;
+
+/// Type alias for the embedder used throughout the application.
+pub type AppEmbedder = Arc<Embedder<FastEmbedProvider>>;
 
 /// Root application context for dependency injection.
 ///
@@ -17,14 +22,17 @@ pub struct Context {
     pub graph: Arc<Graph>,
     /// Application configuration.
     pub config: Arc<Config>,
+    /// Embedding provider for semantic search.
+    pub embedder: AppEmbedder,
 }
 
 impl Context {
     /// Creates a new context with the given dependencies.
-    pub fn new(graph: Graph, config: Config) -> Self {
+    pub fn new(graph: Graph, config: Config, embedder: Embedder<FastEmbedProvider>) -> Self {
         Self {
             graph: Arc::new(graph),
             config: Arc::new(config),
+            embedder: Arc::new(embedder),
         }
     }
 }
