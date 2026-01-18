@@ -1,0 +1,5 @@
+# Project-specific configuration
+# Credentials should be in ~/.config/gnapsis/config.toml
+
+[project]
+name = "gnapsis"

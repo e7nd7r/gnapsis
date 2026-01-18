@@ -1,0 +1,22 @@
+# Trello Project Configuration for Gnapsis Development
+
+name = "Gnapsis"
+description = "Code intelligence graph - MCP server for knowledge management with Neo4j"
+
+# Vector Database Configuration
+[vectordb]
+engine = "sqlite"
+path = ".trello-vectors.db"
+distance = "cosine"
+
+# Embedding Configuration
+[embedding]
+provider = "fastembed"
+model = "bge-small-en-v1.5-q"
+show_download_progress = true
+
+# Trello Boards
+[[boards]]
+id = "696bd8a0ef78258bfe612980"
+name = "Gnapsis"
+description = "Code intelligence graph - MCP server for knowledge management with Neo4j"
