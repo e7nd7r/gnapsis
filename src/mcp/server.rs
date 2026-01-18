@@ -37,7 +37,7 @@ impl McpServer {
 
     /// Build the combined tool router from all tool modules.
     fn tool_router() -> ToolRouter<Self> {
-        Self::project_tools() + Self::taxonomy_tools()
+        Self::project_tools() + Self::taxonomy_tools() + Self::entity_tools()
     }
 
     /// Resolve a dependency from the context.
@@ -88,11 +88,22 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **list_categories** - List categories by scope
 - **create_category** - Create new category at a scope
 
+## Entity Tools
+
+- **create_entity** - Create entity with auto-embedding
+- **update_entity** - Update entity (re-embeds on description change)
+- **delete_entity** - Delete entity (must have no children)
+- **classify** - Classify entity with categories
+- **unclassify** - Remove classifications from entity
+- **add_belongs** - Add composition (child BELONGS_TO parents)
+- **add_related** - Add RELATED_TO relationships
+- **add_link** - Add code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
+- **add_references** - Add document references with auto-embedding
+- **remove_references** - Remove document references
+
 ## Coming Soon
 
-- Entity CRUD operations
-- Classification and relationships
-- Semantic search
+- Query and search tools
 - Git sync tools
 "#
                 .to_string(),
