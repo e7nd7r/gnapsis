@@ -10,7 +10,7 @@ use super::Migration;
 /// APOC triggers migration.
 pub struct M002Triggers;
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Migration for M002Triggers {
     fn id(&self) -> &'static str {
         "m002_triggers"

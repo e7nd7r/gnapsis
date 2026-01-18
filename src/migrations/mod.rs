@@ -28,8 +28,11 @@ use crate::error::AppError;
 /// Migrations are applied in order of their version number.
 /// Each migration runs within a transaction - on failure, changes are rolled back.
 /// Migrations must be idempotent for safe retries.
-#[async_trait(?Send)]
-pub trait Migration: Sync {
+///
+/// Note: neo4rs 0.7+ implements `Send + Sync` for `Txn`, so we can use
+/// `#[async_trait]` which adds Send bounds by default.
+#[async_trait]
+pub trait Migration: Send + Sync {
     /// Unique identifier for this migration (e.g., "m001_init").
     fn id(&self) -> &'static str;
 
@@ -40,6 +43,8 @@ pub trait Migration: Sync {
     fn description(&self) -> &'static str;
 
     /// Apply the migration within a transaction.
+    ///
+    /// The transaction is managed by `run_migrations` - just use it for queries.
     async fn up(&self, txn: &mut Txn) -> Result<(), AppError>;
 }
 

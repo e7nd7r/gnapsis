@@ -1,0 +1,97 @@
+//! MCP server implementation for Gnapsis.
+
+use std::sync::Arc;
+
+use rmcp::{
+    handler::server::{router::tool::ToolRouter, ServerHandler},
+    model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+    tool_handler,
+};
+
+use crate::context::Context;
+use crate::di::FromRef;
+
+/// Gnapsis MCP Server for code intelligence graph management.
+///
+/// This server provides AI assistants with tools to:
+/// - Initialize and manage the Neo4j graph schema
+/// - Create and query entities in the knowledge graph
+/// - Manage classifications and relationships
+/// - Sync with git changes
+#[derive(Clone)]
+pub struct McpServer {
+    pub(crate) ctx: Arc<Context>,
+    tool_router: ToolRouter<McpServer>,
+}
+
+impl McpServer {
+    /// Create a new Gnapsis MCP server with the given context.
+    pub fn new(ctx: Context) -> Self {
+        tracing::info!("Initializing Gnapsis MCP server");
+
+        Self {
+            ctx: Arc::new(ctx),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Build the combined tool router from all tool modules.
+    fn tool_router() -> ToolRouter<Self> {
+        Self::project_tools()
+        // Future: + Self::entity_tools() + Self::category_tools() + ...
+    }
+
+    /// Resolve a dependency from the context.
+    ///
+    /// This enables compile-time dependency injection for repositories
+    /// and other services that implement `FromRef<Context>`.
+    pub fn resolve<T: FromRef<Context>>(&self) -> T {
+        T::from_ref(&self.ctx)
+    }
+
+    /// Get direct access to the context.
+    pub fn context(&self) -> &Context {
+        &self.ctx
+    }
+}
+
+// ============================================================================
+// Server Handler
+// ============================================================================
+
+#[tool_handler]
+impl ServerHandler for McpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            server_info: Implementation::from_build_env(),
+            instructions: Some(
+                r#"Gnapsis - Code Intelligence Graph MCP Server
+
+A knowledge graph for understanding codebases through semantic relationships.
+
+## Getting Started
+
+1. **init_project** - Initialize the database schema (run once)
+2. **get_project_stats** - View entity counts and schema version
+
+## Concepts
+
+- **Entities**: Named concepts in your codebase (modules, structs, functions)
+- **Categories**: Classification values at each scope level
+- **Scopes**: Hierarchy levels (Domain → Feature → Namespace → Component → Unit)
+- **DocumentReferences**: Pointers to code locations with embeddings
+
+## Coming Soon
+
+- Entity CRUD operations
+- Classification and relationships
+- Semantic search
+- Git sync tools
+"#
+                .to_string(),
+            ),
+        }
+    }
+}

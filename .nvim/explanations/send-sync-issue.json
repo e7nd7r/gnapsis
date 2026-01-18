@@ -1,0 +1,60 @@
+{
+  "steps": [
+    {
+      "markers": [
+        {
+          "file": "src/mcp/server.rs",
+          "end_line": 142,
+          "start_line": 140,
+          "highlight_type": "primary"
+        }
+      ],
+      "content": "The compiler says:\n\n```\nfuture cannot be sent between threads safely\nthe trait Send is not implemented for dyn Migration\n```\n\nMCP tools run in a **multi-threaded async runtime**. Futures may move between threads at `.await` points.",
+      "title": "Step 1: The Error",
+      "id": "error"
+    },
+    {
+      "markers": [
+        {
+          "file": "src/migrations/mod.rs",
+          "end_line": 44,
+          "start_line": 31,
+          "highlight_type": "primary"
+        }
+      ],
+      "content": "The `Migration` trait uses `#[async_trait(?Send)]` which means:\n\n- `dyn Migration` is **not Send**\n- Futures from `up()` are **not Send**\n\nWe used `?Send` because `neo4rs::Txn` is not Send.",
+      "title": "Step 2: Migration Trait is ?Send",
+      "id": "trait"
+    },
+    {
+      "markers": [
+        {
+          "file": "src/migrations/mod.rs",
+          "end_line": 106,
+          "start_line": 74,
+          "highlight_type": "primary"
+        }
+      ],
+      "content": "In `run_migrations`, we hold `Vec<Box<dyn Migration>>` across `.await` points:\n\n1. `migrations` created (not Send)\n2. await `graph.start_txn()`\n3. await `migration.up()`\n4. await `txn.commit()`\n\nSince `migrations` lives across awaits, the whole future is **not Send**.",
+      "title": "Step 3: Await Point Problem",
+      "id": "await"
+    },
+    {
+      "markers": [
+        {
+          "file": "src/migrations/mod.rs",
+          "end_line": 44,
+          "start_line": 31,
+          "highlight_type": "secondary"
+        }
+      ],
+      "content": "We need to:\n\n1. Change `#[async_trait(?Send)]` to `#[async_trait]`\n2. Make trait `Send + Sync`\n3. Pass `&Graph` instead of `&mut Txn`\n\nEach migration handles its own transaction internally, so `Txn` never crosses the trait boundary.",
+      "title": "Step 4: The Solution",
+      "id": "solution"
+    }
+  ],
+  "created": "2026-01-18T02:08:20Z",
+  "title": "Why MCP Tools Require Send Futures",
+  "id": "send-sync-issue"
+}
+
