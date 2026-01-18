@@ -37,8 +37,7 @@ impl McpServer {
 
     /// Build the combined tool router from all tool modules.
     fn tool_router() -> ToolRouter<Self> {
-        Self::project_tools()
-        // Future: + Self::entity_tools() + Self::category_tools() + ...
+        Self::project_tools() + Self::taxonomy_tools()
     }
 
     /// Resolve a dependency from the context.
@@ -82,6 +81,12 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **Categories**: Classification values at each scope level
 - **Scopes**: Hierarchy levels (Domain → Feature → Namespace → Component → Unit)
 - **DocumentReferences**: Pointers to code locations with embeddings
+
+## Taxonomy Tools
+
+- **list_scopes** - List scope hierarchy (Domain, Feature, Namespace, Component, Unit)
+- **list_categories** - List categories by scope
+- **create_category** - Create new category at a scope
 
 ## Coming Soon
 
