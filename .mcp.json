@@ -8,6 +8,20 @@
         "stdio"
       ],
       "env": {}
+    },
+    "nvim-mcp": {
+      "command": "nvim-mcp",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
+    },
+    "gnapsis": {
+      "command": "gnapsis",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
     }
   }
 }

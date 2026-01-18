@@ -10,7 +10,7 @@ use super::Migration;
 /// Schema setup migration (DDL only - constraints and indexes).
 pub struct M001Schema;
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Migration for M001Schema {
     fn id(&self) -> &'static str {
         "m001_schema"

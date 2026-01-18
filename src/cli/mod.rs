@@ -1,0 +1,43 @@
+//! CLI module for Gnapsis.
+//!
+//! Subcommands:
+//! - `init`: Initialize the database schema
+//! - `mcp`: Run the MCP server (stdio transport)
+
+mod init;
+mod mcp;
+
+use clap::{Parser, Subcommand};
+
+/// Gnapsis - Code Intelligence Graph
+#[derive(Parser)]
+#[command(name = "gnapsis")]
+#[command(about = "Code intelligence graph - MCP server for knowledge management")]
+#[command(version)]
+pub struct App {
+    /// Run in verbose mode
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
+
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// Initialize the database schema and seed data
+    Init,
+
+    /// Run the MCP server (stdio transport)
+    Mcp,
+}
+
+impl App {
+    /// Run the CLI application.
+    pub async fn run(self) -> color_eyre::Result<()> {
+        match self.command {
+            Command::Init => self.run_init().await,
+            Command::Mcp => self.run_mcp().await,
+        }
+    }
+}

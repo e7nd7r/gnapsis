@@ -11,7 +11,7 @@ use super::Migration;
 /// Seed data migration (scopes and categories).
 pub struct M003SeedData;
 
-#[async_trait(?Send)]
+#[async_trait]
 impl Migration for M003SeedData {
     fn id(&self) -> &'static str {
         "m003_seed_data"
