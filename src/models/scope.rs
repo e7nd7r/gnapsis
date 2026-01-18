@@ -1,5 +1,7 @@
 //! Scope enum representing the compositional hierarchy levels.
 
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 /// Fixed scopes in the compositional hierarchy.
@@ -48,5 +50,23 @@ impl Scope {
 impl std::fmt::Display for Scope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+impl FromStr for Scope {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Domain" | "domain" => Ok(Scope::Domain),
+            "Feature" | "feature" => Ok(Scope::Feature),
+            "Namespace" | "namespace" => Ok(Scope::Namespace),
+            "Component" | "component" => Ok(Scope::Component),
+            "Unit" | "unit" => Ok(Scope::Unit),
+            _ => Err(format!(
+                "Invalid scope '{}'. Valid values: Domain, Feature, Namespace, Component, Unit",
+                s
+            )),
+        }
     }
 }
