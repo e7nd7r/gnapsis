@@ -1,7 +1,7 @@
 //! Configuration with layered resolution using figment.
 //!
 //! Resolution order (highest priority last):
-//! 1. User config: `~/.config/gnapsis/config.toml`
+//! 1. User config: `~/.config/gnapsis/config.toml` (XDG) or platform config dir
 //! 2. Project config: `.gnapsis.toml`
 //! 3. Environment variables: `GNAPSIS_*`
 
@@ -105,9 +105,7 @@ pub struct ProjectConfig {
 impl Config {
     /// Load config with layered resolution (user → project → env).
     pub fn load() -> Result<Self, ConfigError> {
-        let user_config = dirs::config_dir()
-            .map(|p| p.join("gnapsis/config.toml"))
-            .unwrap_or_default();
+        let user_config = Self::user_config_path();
 
         Figment::new()
             // Layer 1: User config (lowest priority)
@@ -118,5 +116,20 @@ impl Config {
             .merge(Env::prefixed("GNAPSIS_").split("_"))
             .extract()
             .map_err(ConfigError::from)
+    }
+
+    /// User config path: ~/.config/gnapsis/config.toml (XDG) or platform config dir.
+    fn user_config_path() -> std::path::PathBuf {
+        // Prefer XDG config location (~/.config) on all platforms
+        if let Some(home) = dirs::home_dir() {
+            let xdg_path = home.join(".config").join("gnapsis").join("config.toml");
+            if xdg_path.exists() {
+                return xdg_path;
+            }
+        }
+        // Fall back to platform-specific config dir
+        dirs::config_dir()
+            .map(|p| p.join("gnapsis").join("config.toml"))
+            .unwrap_or_default()
     }
 }

@@ -16,8 +16,11 @@ Thumbs.db
 .env
 .env.local
 
-# Config (may contain credentials)
+# User config directory (may contain credentials)
 .gnapsis/
+
+# Cache
+.fastembed_cache/
 
 # Logs
 *.log

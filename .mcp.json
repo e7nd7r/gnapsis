@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "trelloui": {
+      "command": "trelloui",
+      "args": [
+        "mcp",
+        "--transport",
+        "stdio"
+      ],
+      "env": {}
+    }
+  }
+}
