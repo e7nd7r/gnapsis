@@ -42,6 +42,7 @@ impl McpServer {
             + Self::entity_tools()
             + Self::query_tools()
             + Self::sync_tools()
+            + Self::validation_tools()
     }
 
     /// Resolve a dependency from the context.
@@ -121,6 +122,12 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **get_document_references** - Get all document references for a file
 - **validate_documents** - Find stale references with diff context
 - **sync_references** - Update line numbers for document references
+
+## Validation & LSP Tools
+
+- **validate_graph** - Check graph integrity (orphans, cycles, scope violations, unclassified)
+- **lsp_analyze** - Analyze LSP symbols to find untracked code
+- **lsp_refresh** - Refresh document references using LSP symbol locations
 "#
                 .to_string(),
             ),
