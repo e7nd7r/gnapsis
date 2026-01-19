@@ -37,6 +37,9 @@ pub enum AppError {
     #[error("Git error: {0}")]
     Git(#[from] git2::Error),
 
+    #[error("Git error: {message}")]
+    GitMessage { message: String },
+
     #[error("Repository not found at: {0}")]
     RepoNotFound(String),
 
@@ -65,6 +68,7 @@ impl From<AppError> for rmcp::model::ErrorData {
             AppError::Connection(_) => (ErrorCode::INTERNAL_ERROR, "CONNECTION_ERROR"),
             AppError::Query { .. } => (ErrorCode::INTERNAL_ERROR, "QUERY_ERROR"),
             AppError::Git(_) => (ErrorCode::INTERNAL_ERROR, "GIT_ERROR"),
+            AppError::GitMessage { .. } => (ErrorCode::INTERNAL_ERROR, "GIT_ERROR"),
             AppError::RepoNotFound(_) => (ErrorCode::RESOURCE_NOT_FOUND, "REPO_NOT_FOUND"),
             AppError::Embedding(_) => (ErrorCode::INTERNAL_ERROR, "EMBEDDING_ERROR"),
         };
