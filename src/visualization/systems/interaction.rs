@@ -48,9 +48,7 @@ pub fn drag_node_system(
                         // Hit radius (slightly larger than visual for easier selection)
                         let hit_radius = graph_node.radius * 1.8;
 
-                        if distance < hit_radius
-                            && (closest.is_none() || t < closest.unwrap().2)
-                        {
+                        if distance < hit_radius && (closest.is_none() || t < closest.unwrap().2) {
                             closest = Some((entity, graph_node.node_idx, t, node_pos));
                         }
                     }

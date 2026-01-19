@@ -1,0 +1,99 @@
+{
+  "created": "2026-01-18T15:25:19Z",
+  "id": "visualizer-eli5",
+  "description": "A simple explanation of the visualization module",
+  "title": "How the 3D Graph Visualizer Works",
+  "tags": [
+    "visualization",
+    "eli5",
+    "bevy",
+    "physics"
+  ],
+  "steps": [
+    {
+      "content": "Imagine you have a box of LEGO pieces that are connected to each other.\n\n**The visualizer shows you:**\n- Each LEGO piece as a **ball** (sphere)\n- The connections between pieces as **strings** (lines)\n\nWhen you ask \"show me how this code is connected\", the visualizer draws it in 3D so you can spin it around and look at it from any angle!",
+      "title": "The Big Picture",
+      "id": "the-big-picture",
+      "markers": []
+    },
+    {
+      "content": "When you call `query_subgraph` with `visualize: true`:\n\n1. The tool finds all the connected things (entities)\n2. It writes them to a temporary file\n3. It starts a **new window** to show the picture\n4. The tool finishes immediately (doesn't wait)\n\nIt's like asking someone to draw a picture for you - they take your list and go draw it while you keep working!",
+      "title": "Step 1: Getting the Data",
+      "id": "data-flow",
+      "markers": [
+        {
+          "file": "src/mcp/tools/query.rs",
+          "highlight_type": "primary",
+          "start_line": 19,
+          "end_line": 50
+        }
+      ]
+    },
+    {
+      "content": "How do we decide where each ball goes? We use **pretend physics**!\n\n🧲 **Rule 1 - Repulsion**: Every ball pushes away from every other ball (like magnets with the same pole)\n\n🪢 **Rule 2 - Attraction**: Connected balls are tied together with a rubber band (they pull toward each other)\n\n⏸️ **Rule 3 - Damping**: Everything slows down over time (like friction)\n\nAfter running this a few times, the balls settle into nice positions where connected things are close together!",
+      "title": "Step 2: The Magic Positioning",
+      "id": "physics-intro",
+      "markers": [
+        {
+          "file": "src/visualization/graph.rs",
+          "highlight_type": "context",
+          "start_line": 1,
+          "end_line": 15
+        }
+      ]
+    },
+    {
+      "content": "```\nRepulsion:  force = 500 / (distance²)\nAttraction: force = (distance - 3) × 0.1\nDamping:    velocity = velocity × 0.9\n```\n\nThe numbers control how strong each effect is:\n- **500** = how hard balls push apart\n- **3** = the ideal distance between connected balls\n- **0.1** = how stretchy the rubber bands are\n- **0.9** = how much friction there is",
+      "title": "The Physics in Code",
+      "id": "physics-code",
+      "markers": [
+        {
+          "file": "src/visualization/graph.rs",
+          "highlight_type": "primary",
+          "start_line": 103,
+          "end_line": 140
+        }
+      ]
+    },
+    {
+      "content": "**Bevy** is a game engine that draws 3D graphics.\n\nFor each node, we create:\n- A **sphere** (3D ball) at its position\n- A **color** based on what type it is\n\nFor each connection, we draw a **line** between the two balls.\n\nThen we add a **camera** so you can look at it, and **lights** so you can see it!",
+      "title": "Step 3: Drawing the Picture",
+      "id": "rendering",
+      "markers": [
+        {
+          "file": "src/visualization/renderer.rs",
+          "highlight_type": "primary",
+          "start_line": 1,
+          "end_line": 30
+        }
+      ]
+    },
+    {
+      "content": "Different types of things get different colors:\n\n| Type | Color | Meaning |\n|------|-------|--------|\n| 🔵 Entity | Blue | A concept in your code (module, function, struct) |\n| 🟢 Document Reference | Green | A pointer to actual code location |\n| 🟡 Start Node | Gold | The thing you asked about |\n\n*(Right now everything is pink - that's a bug to fix!)*",
+      "title": "The Color Code (What Should Happen)",
+      "id": "colors",
+      "markers": [
+        {
+          "file": "src/visualization/renderer.rs",
+          "highlight_type": "primary",
+          "start_line": 17,
+          "end_line": 20
+        }
+      ]
+    },
+    {
+      "content": "You can interact with the 3D view:\n\n- **Drag** with mouse → Rotate the camera around\n- **Scroll** wheel → Zoom in and out\n\nThe camera orbits around the center point, like you're walking around a sculpture and looking at it from different angles.",
+      "title": "Playing With It",
+      "id": "interaction",
+      "markers": [
+        {
+          "file": "src/visualization/renderer.rs",
+          "highlight_type": "primary",
+          "start_line": 130,
+          "end_line": 165
+        }
+      ]
+    }
+  ]
+}
+
