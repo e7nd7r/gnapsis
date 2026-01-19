@@ -37,7 +37,11 @@ impl McpServer {
 
     /// Build the combined tool router from all tool modules.
     fn tool_router() -> ToolRouter<Self> {
-        Self::project_tools() + Self::taxonomy_tools() + Self::entity_tools() + Self::query_tools()
+        Self::project_tools()
+            + Self::taxonomy_tools()
+            + Self::entity_tools()
+            + Self::query_tools()
+            + Self::sync_tools()
     }
 
     /// Resolve a dependency from the context.
@@ -111,9 +115,12 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **search_documents** - Semantic search on document references
 - **semantic_search** - Semantic search on entities
 
-## Coming Soon
+## Sync Tools
 
-- Git sync tools
+- **get_changed_files** - Get list of files changed between commits
+- **get_document_references** - Get all document references for a file
+- **validate_documents** - Find stale references with diff context
+- **sync_references** - Update line numbers for document references
 "#
                 .to_string(),
             ),

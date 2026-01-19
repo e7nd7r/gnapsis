@@ -5,6 +5,7 @@ pub mod config;
 pub mod context;
 pub mod di;
 pub mod error;
+pub mod git;
 pub mod mcp;
 pub mod migrations;
 pub mod models;
