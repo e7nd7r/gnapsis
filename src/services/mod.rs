@@ -4,5 +4,7 @@
 //! using the `FromContext` derive macro for dependency injection.
 
 mod graph;
+mod validation;
 
 pub use graph::GraphService;
+pub use validation::{ValidationIssue, ValidationService};

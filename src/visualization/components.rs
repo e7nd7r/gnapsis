@@ -62,4 +62,3 @@ pub struct InfoPanel;
 /// Marker component for the info panel text content.
 #[derive(Component)]
 pub struct InfoPanelText;
-
