@@ -2,6 +2,8 @@
 //!
 //! These tools provide thin MCP handlers that delegate to GraphService.
 
+use std::process::Command;
+
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::CallToolResult,
@@ -10,12 +12,45 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
-use crate::models::{
-    CategoryClassification, CompositionGraph, CompositionNode, DocumentReference, Entity,
-    EntityWithContext, EntityWithReference, SearchResult, Subgraph, SubgraphEdge, SubgraphNode,
-};
 use crate::services::GraphService;
+
+/// Spawn the visualizer process with the given JSON data.
+fn spawn_visualizer<T: Serialize>(data: &T) -> Result<(), McpError> {
+    // Write to temp file
+    let temp_file = tempfile::NamedTempFile::with_suffix(".json").map_err(|e| {
+        McpError::internal_error(format!("Failed to create temp file: {}", e), None)
+    })?;
+
+    let json = serde_json::to_string_pretty(data)
+        .map_err(|e| McpError::internal_error(format!("Failed to serialize: {}", e), None))?;
+
+    std::fs::write(temp_file.path(), &json)
+        .map_err(|e| McpError::internal_error(format!("Failed to write temp file: {}", e), None))?;
+
+    // Keep the temp file around (don't delete on drop)
+    let temp_path = temp_file.into_temp_path();
+    let path_str = temp_path.to_string_lossy().to_string();
+
+    // Spawn detached process
+    let exe = std::env::current_exe()
+        .map_err(|e| McpError::internal_error(format!("Failed to get current exe: {}", e), None))?;
+
+    Command::new(exe)
+        .arg("visualize")
+        .arg(&path_str)
+        .spawn()
+        .map_err(|e| {
+            McpError::internal_error(format!("Failed to spawn visualizer: {}", e), None)
+        })?;
+
+    // Prevent temp file from being deleted (it will be cleaned up by OS eventually)
+    std::mem::forget(temp_path);
+
+    tracing::info!(path = %path_str, "Spawned visualizer process");
+    Ok(())
+}
 
 // ============================================================================
 // Parameter Types
@@ -63,6 +98,9 @@ pub struct GetCompositionGraphParams {
     /// Maximum depth to traverse (default: unlimited).
     #[serde(default)]
     pub max_depth: Option<u32>,
+    /// Open 3D visualization window (spawns separate process).
+    #[serde(default)]
+    pub visualize: Option<bool>,
 }
 
 /// Parameters for query_subgraph tool.
@@ -79,6 +117,9 @@ pub struct QuerySubgraphParams {
     /// Optional semantic query to filter results.
     #[serde(default)]
     pub semantic_query: Option<String>,
+    /// Open 3D visualization window (spawns separate process).
+    #[serde(default)]
+    pub visualize: Option<bool>,
 }
 
 /// Parameters for search_documents tool.
@@ -111,321 +152,6 @@ pub struct SemanticSearchParams {
 }
 
 // ============================================================================
-// Response Types (MCP-specific serialization)
-// ============================================================================
-
-/// Category info for MCP response.
-#[derive(Debug, Serialize)]
-pub struct CategoryInfoResponse {
-    pub id: String,
-    pub name: String,
-    pub scope: String,
-}
-
-impl From<CategoryClassification> for CategoryInfoResponse {
-    fn from(c: CategoryClassification) -> Self {
-        Self {
-            id: c.id,
-            name: c.name,
-            scope: c.scope,
-        }
-    }
-}
-
-/// Document reference info for MCP response.
-#[derive(Debug, Serialize)]
-pub struct ReferenceInfoResponse {
-    pub id: String,
-    pub document_path: String,
-    pub start_line: u32,
-    pub end_line: u32,
-    pub description: String,
-    pub commit_sha: String,
-}
-
-impl From<DocumentReference> for ReferenceInfoResponse {
-    fn from(r: DocumentReference) -> Self {
-        Self {
-            id: r.id,
-            document_path: r.document_path,
-            start_line: r.start_line,
-            end_line: r.end_line,
-            description: r.description,
-            commit_sha: r.commit_sha,
-        }
-    }
-}
-
-/// Entity summary for MCP response.
-#[derive(Debug, Serialize)]
-pub struct EntitySummaryResponse {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-}
-
-impl From<Entity> for EntitySummaryResponse {
-    fn from(e: Entity) -> Self {
-        Self {
-            id: e.id,
-            name: e.name,
-            description: e.description,
-        }
-    }
-}
-
-/// Full entity details for MCP response.
-#[derive(Debug, Serialize)]
-pub struct EntityDetailsResponse {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub classifications: Vec<CategoryInfoResponse>,
-    pub references: Vec<ReferenceInfoResponse>,
-    pub parents: Vec<EntitySummaryResponse>,
-    pub children: Vec<EntitySummaryResponse>,
-    pub related: Vec<EntitySummaryResponse>,
-}
-
-impl From<EntityWithContext> for EntityDetailsResponse {
-    fn from(ctx: EntityWithContext) -> Self {
-        Self {
-            id: ctx.entity.id,
-            name: ctx.entity.name,
-            description: ctx.entity.description,
-            classifications: ctx.classifications.into_iter().map(Into::into).collect(),
-            references: ctx.references.into_iter().map(Into::into).collect(),
-            parents: ctx.parents.into_iter().map(Into::into).collect(),
-            children: ctx.children.into_iter().map(Into::into).collect(),
-            related: ctx.related.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-/// Response for get_entity tool.
-#[derive(Debug, Serialize)]
-pub struct GetEntityResult {
-    pub entity: EntityDetailsResponse,
-}
-
-/// Response for find_entities tool.
-#[derive(Debug, Serialize)]
-pub struct FindEntitiesResult {
-    pub entities: Vec<EntitySummaryResponse>,
-    pub count: usize,
-}
-
-/// Entity with reference for MCP response.
-#[derive(Debug, Serialize)]
-pub struct EntityWithReferenceResponse {
-    pub entity: EntitySummaryResponse,
-    pub reference: ReferenceInfoResponse,
-}
-
-impl From<EntityWithReference> for EntityWithReferenceResponse {
-    fn from(er: EntityWithReference) -> Self {
-        Self {
-            entity: er.entity.into(),
-            reference: er.reference.into(),
-        }
-    }
-}
-
-/// Response for get_document_entities tool.
-#[derive(Debug, Serialize)]
-pub struct GetDocumentEntitiesResult {
-    pub document_path: String,
-    pub entities: Vec<EntityWithReferenceResponse>,
-    pub count: usize,
-}
-
-/// Composition node for MCP response.
-#[derive(Debug, Serialize)]
-pub struct CompositionNodeResponse {
-    pub id: String,
-    pub name: String,
-    pub depth: i32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub category: Option<String>,
-}
-
-impl From<CompositionNode> for CompositionNodeResponse {
-    fn from(n: CompositionNode) -> Self {
-        Self {
-            id: n.id,
-            name: n.name,
-            depth: n.depth,
-            category: n.category,
-        }
-    }
-}
-
-/// Response for get_composition_graph tool.
-#[derive(Debug, Serialize)]
-pub struct GetCompositionGraphResult {
-    pub entity: CompositionNodeResponse,
-    pub ancestors: Vec<CompositionNodeResponse>,
-    pub descendants: Vec<CompositionNodeResponse>,
-}
-
-impl From<CompositionGraph> for GetCompositionGraphResult {
-    fn from(g: CompositionGraph) -> Self {
-        Self {
-            entity: g.entity.into(),
-            ancestors: g.ancestors.into_iter().map(Into::into).collect(),
-            descendants: g.descendants.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-/// Subgraph node for MCP response.
-#[derive(Debug, Serialize)]
-#[serde(tag = "node_type")]
-pub enum SubgraphNodeResponse {
-    Entity {
-        id: String,
-        name: String,
-        description: String,
-        distance: u32,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        category: Option<String>,
-    },
-    DocumentReference {
-        id: String,
-        document_path: String,
-        start_line: u32,
-        end_line: u32,
-        description: String,
-        distance: u32,
-    },
-}
-
-impl From<SubgraphNode> for SubgraphNodeResponse {
-    fn from(n: SubgraphNode) -> Self {
-        match n {
-            SubgraphNode::Entity {
-                id,
-                name,
-                description,
-                distance,
-                category,
-            } => SubgraphNodeResponse::Entity {
-                id,
-                name,
-                description,
-                distance,
-                category,
-            },
-            SubgraphNode::DocumentReference {
-                id,
-                document_path,
-                start_line,
-                end_line,
-                description,
-                distance,
-            } => SubgraphNodeResponse::DocumentReference {
-                id,
-                document_path,
-                start_line,
-                end_line,
-                description,
-                distance,
-            },
-        }
-    }
-}
-
-/// Subgraph edge for MCP response.
-#[derive(Debug, Serialize)]
-pub struct SubgraphEdgeResponse {
-    pub from_id: String,
-    pub to_id: String,
-    pub relationship: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-impl From<SubgraphEdge> for SubgraphEdgeResponse {
-    fn from(e: SubgraphEdge) -> Self {
-        Self {
-            from_id: e.from_id,
-            to_id: e.to_id,
-            relationship: e.relationship,
-            note: e.note,
-        }
-    }
-}
-
-/// Response for query_subgraph tool.
-#[derive(Debug, Serialize)]
-pub struct QuerySubgraphResult {
-    pub nodes: Vec<SubgraphNodeResponse>,
-    pub edges: Vec<SubgraphEdgeResponse>,
-}
-
-impl From<Subgraph> for QuerySubgraphResult {
-    fn from(s: Subgraph) -> Self {
-        Self {
-            nodes: s.nodes.into_iter().map(Into::into).collect(),
-            edges: s.edges.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-/// Document search result for MCP response.
-#[derive(Debug, Serialize)]
-pub struct DocumentSearchResultResponse {
-    pub reference_id: String,
-    pub entity_id: String,
-    pub entity_name: String,
-    pub document_path: String,
-    pub start_line: u32,
-    pub end_line: u32,
-    pub description: String,
-    pub score: f32,
-}
-
-impl From<SearchResult<EntityWithReference>> for DocumentSearchResultResponse {
-    fn from(r: SearchResult<EntityWithReference>) -> Self {
-        Self {
-            reference_id: r.item.reference.id,
-            entity_id: r.item.entity.id,
-            entity_name: r.item.entity.name,
-            document_path: r.item.reference.document_path,
-            start_line: r.item.reference.start_line,
-            end_line: r.item.reference.end_line,
-            description: r.item.reference.description,
-            score: r.score,
-        }
-    }
-}
-
-/// Response for search_documents tool.
-#[derive(Debug, Serialize)]
-pub struct SearchDocumentsResult {
-    pub results: Vec<DocumentSearchResultResponse>,
-    pub count: usize,
-}
-
-/// Entity search result for MCP response.
-#[derive(Debug, Serialize)]
-pub struct EntitySearchResultResponse {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub score: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub category: Option<String>,
-}
-
-/// Response for semantic_search tool.
-#[derive(Debug, Serialize)]
-pub struct SemanticSearchResult {
-    pub results: Vec<EntitySearchResultResponse>,
-    pub count: usize,
-}
-
-// ============================================================================
 // Tool Router
 // ============================================================================
 
@@ -443,14 +169,8 @@ impl McpServer {
 
         let service = self.resolve::<GraphService>();
         let entity = service.get_entity(&params.entity_id).await?;
-        let response = GetEntityResult {
-            entity: entity.into(),
-        };
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(entity).into()
     }
 
     /// Find entities by classification criteria.
@@ -476,16 +196,7 @@ impl McpServer {
             )
             .await?;
 
-        let count = entities.len();
-        let response = FindEntitiesResult {
-            entities: entities.into_iter().map(Into::into).collect(),
-            count,
-        };
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(entities).into()
     }
 
     /// Get all entities with references to a document.
@@ -497,21 +208,9 @@ impl McpServer {
         tracing::info!(path = %params.document_path, "Running get_document_entities tool");
 
         let service = self.resolve::<GraphService>();
-        let entities = service
-            .get_document_entities(&params.document_path)
-            .await?;
+        let entities = service.get_document_entities(&params.document_path).await?;
 
-        let count = entities.len();
-        let response = GetDocumentEntitiesResult {
-            document_path: params.document_path,
-            entities: entities.into_iter().map(Into::into).collect(),
-            count,
-        };
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(entities).into()
     }
 
     /// Get composition graph (ancestors and descendants via BELONGS_TO).
@@ -533,19 +232,19 @@ impl McpServer {
             )
             .await?;
 
-        let response: GetCompositionGraphResult = graph.into();
-
         tracing::info!(
             id = %params.entity_id,
-            ancestors = response.ancestors.len(),
-            descendants = response.descendants.len(),
+            ancestors = graph.ancestors.len(),
+            descendants = graph.descendants.len(),
             "Retrieved composition graph"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        // Spawn visualizer if requested
+        if params.visualize == Some(true) {
+            spawn_visualizer(&graph)?;
+        }
+
+        Response(graph).into()
     }
 
     /// Query subgraph around an entity within N hops.
@@ -562,6 +261,8 @@ impl McpServer {
             "Running query_subgraph tool"
         );
 
+        let visualize = params.visualize;
+
         let service = self.resolve::<GraphService>();
         let subgraph = service
             .query_subgraph(
@@ -571,18 +272,18 @@ impl McpServer {
             )
             .await?;
 
-        let response: QuerySubgraphResult = subgraph.into();
-
         tracing::info!(
-            nodes = response.nodes.len(),
-            edges = response.edges.len(),
+            nodes = subgraph.nodes.len(),
+            edges = subgraph.edges.len(),
             "Retrieved subgraph"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        // Spawn visualizer if requested
+        if visualize == Some(true) {
+            spawn_visualizer(&subgraph)?;
+        }
+
+        Response(subgraph).into()
     }
 
     /// Search document references by semantic similarity.
@@ -604,18 +305,9 @@ impl McpServer {
             )
             .await?;
 
-        let count = results.len();
-        let response = SearchDocumentsResult {
-            results: results.into_iter().map(Into::into).collect(),
-            count,
-        };
+        tracing::info!(count = results.len(), "Search completed");
 
-        tracing::info!(count = count, "Search completed");
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(results).into()
     }
 
     /// Search entities by semantic similarity.
@@ -638,26 +330,8 @@ impl McpServer {
             )
             .await?;
 
-        let count = results.len();
-        let response = SemanticSearchResult {
-            results: results
-                .into_iter()
-                .map(|r| EntitySearchResultResponse {
-                    id: r.item.id,
-                    name: r.item.name,
-                    description: r.item.description,
-                    score: r.score,
-                    category: None, // Category not returned from search
-                })
-                .collect(),
-            count,
-        };
+        tracing::info!(count = results.len(), "Search completed");
 
-        tracing::info!(count = count, "Search completed");
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(results).into()
     }
 }

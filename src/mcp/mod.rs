@@ -12,7 +12,9 @@
 //!
 //! - `server`: MCP server implementation with tool router
 //! - `tools`: Tool implementations organized by domain
+//! - `protocol`: MCP protocol response helpers
 
+pub mod protocol;
 pub(crate) mod server;
 mod tools;
 

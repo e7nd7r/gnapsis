@@ -10,7 +10,7 @@ pub mod migrations;
 pub mod models;
 pub mod repositories;
 pub mod services;
-pub mod tools;
+pub mod visualization;
 
 // Re-export FromRef at crate root for di-macros generated code
 pub use di::FromRef;

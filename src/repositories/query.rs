@@ -295,10 +295,7 @@ impl QueryRepository {
     }
 
     /// Get entity for composition graph starting node.
-    pub async fn get_entity_for_composition(
-        &self,
-        id: &str,
-    ) -> Result<CompositionNode, AppError> {
+    pub async fn get_entity_for_composition(&self, id: &str) -> Result<CompositionNode, AppError> {
         let mut result = self
             .graph
             .execute(
@@ -397,7 +394,10 @@ impl QueryRepository {
             rel_filter, hops
         );
 
-        let mut result = self.graph.execute(query(&query_str).param("id", id)).await?;
+        let mut result = self
+            .graph
+            .execute(query(&query_str).param("id", id))
+            .await?;
 
         while let Some(row) = result.next().await? {
             let node: neo4rs::Node = row.get("connected").map_err(|e| AppError::Query {

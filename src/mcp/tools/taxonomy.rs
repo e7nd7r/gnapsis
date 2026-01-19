@@ -9,6 +9,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
 use crate::models::{Category, Scope};
 use crate::repositories::{CategoryRepository, SchemaRepository};
@@ -140,10 +141,7 @@ impl McpServer {
 
         tracing::info!(count = response.scopes.len(), "Listed scopes");
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// List categories, optionally filtered by scope.
@@ -186,10 +184,7 @@ impl McpServer {
 
         tracing::info!(count = response.count, "Listed categories");
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Create a new category at a specific scope.
@@ -250,9 +245,6 @@ impl McpServer {
             "Created category"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 }

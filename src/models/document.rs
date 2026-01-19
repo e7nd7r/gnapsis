@@ -37,7 +37,8 @@ pub struct DocumentReference {
     pub content_type: ContentType,
     /// Description of what this reference points to.
     pub description: String,
-    /// Vector embedding for semantic search (optional).
+    /// Vector embedding for semantic search (internal, not serialized).
+    #[serde(skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     /// LSP symbol name (optional).
     pub lsp_symbol: Option<String>,

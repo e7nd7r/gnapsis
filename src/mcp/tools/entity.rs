@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::context::AppEmbedder;
 use crate::error::AppError;
+use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
 use crate::models::{generate_ulid, ContentType, Entity};
 use crate::repositories::{
@@ -289,10 +290,7 @@ impl McpServer {
 
         tracing::info!(id = %response.entity.id, "Created entity");
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Update an entity's name and/or description.
@@ -340,10 +338,7 @@ impl McpServer {
             "Updated entity"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Delete an entity from the knowledge graph.
@@ -387,10 +382,7 @@ impl McpServer {
 
         tracing::info!(id = %params.entity_id, "Deleted entity");
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Classify an entity with one or more categories.
@@ -445,10 +437,7 @@ impl McpServer {
             "Classified entity"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Remove classifications from an entity.
@@ -484,10 +473,7 @@ impl McpServer {
             "Unclassified entity"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Add composition relationships (child BELONGS_TO parents).
@@ -524,10 +510,7 @@ impl McpServer {
             "Added belongs relationships"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Add RELATED_TO relationships between entities.
@@ -562,10 +545,7 @@ impl McpServer {
             "Added related relationships"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Add a code-level link between entities.
@@ -603,10 +583,7 @@ impl McpServer {
             "Added link"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Add document references to an entity.
@@ -686,10 +663,7 @@ impl McpServer {
             "Added references"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Remove document references.
@@ -719,9 +693,6 @@ impl McpServer {
 
         tracing::info!(count = response.removed_count, "Removed references");
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 }

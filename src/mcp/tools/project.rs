@@ -9,6 +9,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
 use crate::migrations::run_migrations;
 use crate::repositories::{ProjectStats, SchemaRepository, ScopeInfo};
@@ -127,10 +128,7 @@ impl McpServer {
             "Project initialization complete"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 
     /// Get project statistics including entity counts and schema info.
@@ -175,9 +173,6 @@ impl McpServer {
             "Project stats retrieved"
         );
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        Response(response).into()
     }
 }

@@ -16,7 +16,8 @@ pub struct Entity {
     pub name: String,
     /// Detailed description of the entity.
     pub description: String,
-    /// Vector embedding for semantic search (optional).
+    /// Vector embedding for semantic search (internal, not serialized).
+    #[serde(skip_serializing)]
     pub embedding: Option<Vec<f32>>,
     /// Creation timestamp.
     pub created_at: DateTime<Utc>,
