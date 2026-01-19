@@ -1,4 +1,4 @@
-//! MCP tool response helpers.
+//! MCP protocol response helpers.
 
 use rmcp::model::CallToolResult;
 use serde::Serialize;

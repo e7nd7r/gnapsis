@@ -37,7 +37,7 @@ impl McpServer {
 
     /// Build the combined tool router from all tool modules.
     fn tool_router() -> ToolRouter<Self> {
-        Self::project_tools() + Self::taxonomy_tools() + Self::entity_tools()
+        Self::project_tools() + Self::taxonomy_tools() + Self::entity_tools() + Self::query_tools()
     }
 
     /// Resolve a dependency from the context.
@@ -101,9 +101,18 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **add_references** - Add document references with auto-embedding
 - **remove_references** - Remove document references
 
+## Query Tools
+
+- **get_entity** - Get entity with full context (classifications, references, hierarchy)
+- **find_entities** - Find entities by scope, category, or parent
+- **get_document_entities** - Get all entities in a document
+- **get_composition_graph** - Get ancestors and descendants via BELONGS_TO
+- **query_subgraph** - Extract subgraph within N hops
+- **search_documents** - Semantic search on document references
+- **semantic_search** - Semantic search on entities
+
 ## Coming Soon
 
-- Query and search tools
 - Git sync tools
 "#
                 .to_string(),

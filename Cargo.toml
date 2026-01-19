@@ -66,3 +66,23 @@ figment = { version = "0.10", features = ["toml", "env"] }
 
 # Config directories
 dirs = "5"
+
+# 3D Visualization
+bevy = { version = "0.15", default-features = false, features = [
+    "bevy_winit",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_text",
+    "bevy_ui",
+    "default_font",
+    "tonemapping_luts",
+    "x11",
+    "wayland",
+] }
+
+# Temp files
+tempfile = "3"
+
+# msgpack for Neovim RPC
+rmpv = "1"

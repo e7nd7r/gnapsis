@@ -6,9 +6,11 @@
 mod category;
 mod document;
 mod entity;
+mod query;
 mod schema;
 
 pub use category::CategoryRepository;
 pub use document::{CreateReferenceParams, DocumentRepository, UpdateReferenceParams};
 pub use entity::EntityRepository;
+pub use query::QueryRepository;
 pub use schema::{ProjectStats, SchemaRepository, ScopeInfo};

@@ -9,7 +9,8 @@ pub mod mcp;
 pub mod migrations;
 pub mod models;
 pub mod repositories;
-pub mod tools;
+pub mod services;
+pub mod visualization;
 
 // Re-export FromRef at crate root for di-macros generated code
 pub use di::FromRef;
