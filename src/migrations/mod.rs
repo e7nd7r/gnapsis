@@ -13,10 +13,14 @@
 mod m001_schema;
 mod m002_triggers;
 mod m003_seed_data;
+mod m004_ontology_v2;
+mod m005_ontology_v2_data;
 
 pub use m001_schema::M001Schema;
 pub use m002_triggers::M002Triggers;
 pub use m003_seed_data::M003SeedData;
+pub use m004_ontology_v2::M004OntologyV2;
+pub use m005_ontology_v2_data::M005OntologyV2Data;
 
 use async_trait::async_trait;
 use neo4rs::{query, Graph, Txn};
@@ -65,6 +69,8 @@ fn all_migrations() -> Vec<Box<dyn Migration>> {
         Box::new(M001Schema),
         Box::new(M002Triggers),
         Box::new(M003SeedData),
+        Box::new(M004OntologyV2),
+        Box::new(M005OntologyV2Data),
     ]
 }
 

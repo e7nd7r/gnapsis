@@ -7,7 +7,7 @@ mod graph;
 mod scope;
 
 pub use category::Category;
-pub use document::{ContentType, Document, DocumentReference};
+pub use document::{CodeReference, Document, Reference, TextReference};
 pub use entity::{generate_ulid, Entity};
 pub use graph::{
     CategoryClassification, CompositionGraph, CompositionNode, EntityWithContext,

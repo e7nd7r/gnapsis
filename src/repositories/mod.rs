@@ -10,7 +10,10 @@ mod query;
 mod schema;
 
 pub use category::CategoryRepository;
-pub use document::{CreateReferenceParams, DocumentRepository, UpdateReferenceParams};
+pub use document::{
+    CreateCodeReferenceParams, CreateTextReferenceParams, DocumentRepository,
+    UpdateCodeReferenceParams, UpdateTextReferenceParams,
+};
 pub use entity::EntityRepository;
 pub use query::QueryRepository;
 pub use schema::{ProjectStats, SchemaRepository, ScopeInfo};

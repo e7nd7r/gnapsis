@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{DocumentReference, Entity};
+use super::{Entity, Reference};
 
 /// Node in a subgraph traversal - either an Entity or DocumentReference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,7 +102,7 @@ pub struct EntityWithContext {
     /// Category classifications.
     pub classifications: Vec<CategoryClassification>,
     /// Document references.
-    pub references: Vec<DocumentReference>,
+    pub references: Vec<Reference>,
     /// Parent entities (via BELONGS_TO).
     pub parents: Vec<Entity>,
     /// Child entities (via BELONGS_TO inward).
@@ -116,8 +116,8 @@ pub struct EntityWithContext {
 pub struct EntityWithReference {
     /// The entity.
     pub entity: Entity,
-    /// The document reference linking entity to the document.
-    pub reference: DocumentReference,
+    /// The reference linking entity to the document.
+    pub reference: Reference,
 }
 
 /// A search result with similarity score.
