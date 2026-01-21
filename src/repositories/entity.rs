@@ -197,23 +197,34 @@ impl EntityRepository {
     }
 
     /// Add a RELATED_TO relationship between entities.
+    ///
+    /// The `note` describes the relationship and can have an embedding for semantic search.
     pub async fn add_related(
         &self,
         from_id: &str,
         to_id: &str,
         relation_type: Option<&str>,
+        note: Option<&str>,
+        embedding: Option<&[f32]>,
     ) -> Result<(), AppError> {
+        let embedding_param: Option<Vec<f64>> =
+            embedding.map(|e| e.iter().map(|&f| f as f64).collect());
+
         self.graph
             .run(
                 query(
                     "MATCH (from:Entity {id: $from_id})
                      MATCH (to:Entity {id: $to_id})
                      MERGE (from)-[r:RELATED_TO]->(to)
-                     SET r.type = $relation_type",
+                     SET r.type = $relation_type,
+                         r.note = $note,
+                         r.embedding = $embedding",
                 )
                 .param("from_id", from_id)
                 .param("to_id", to_id)
-                .param("relation_type", relation_type),
+                .param("relation_type", relation_type)
+                .param("note", note)
+                .param("embedding", embedding_param),
             )
             .await?;
         Ok(())

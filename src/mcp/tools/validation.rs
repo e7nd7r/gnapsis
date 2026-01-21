@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
-use crate::repositories::{DocumentRepository, UpdateReferenceParams};
+use crate::models::Reference;
+use crate::repositories::{DocumentRepository, UpdateCodeReferenceParams};
 use crate::services::{ValidationIssue, ValidationService};
 
 // ============================================================================
@@ -257,10 +258,16 @@ impl McpServer {
             .await
             .map_err(|e: AppError| McpError::from(e))?;
 
-        // Build set of tracked symbols (by lsp_symbol name)
+        // Build set of tracked symbols (by lsp_symbol name, only for CodeReferences)
         let tracked_symbols: std::collections::HashSet<String> = existing_refs
             .iter()
-            .filter_map(|r| r.lsp_symbol.clone())
+            .filter_map(|r| {
+                if let Reference::Code(code_ref) = r {
+                    Some(code_ref.lsp_symbol.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
 
         // Find untracked symbols
@@ -346,31 +353,41 @@ impl McpServer {
         let mut updated = Vec::new();
         let mut unmatched_count = 0;
 
+        // Only process CodeReferences since they have lsp_symbol
         for doc_ref in &existing_refs {
-            if let Some(lsp_symbol_name) = &doc_ref.lsp_symbol {
+            if let Reference::Code(code_ref) = doc_ref {
+                let lsp_symbol_name = &code_ref.lsp_symbol;
                 if let Some(symbol) = symbol_map.get(lsp_symbol_name) {
+                    // Parse current line numbers from lsp_range
+                    let (current_start, current_end) =
+                        parse_lsp_range_lines(&code_ref.lsp_range).unwrap_or((0, 0));
+
                     // Check if lines changed
-                    if doc_ref.start_line != symbol.start_line
-                        || doc_ref.end_line != symbol.end_line
-                    {
+                    if current_start != symbol.start_line || current_end != symbol.end_line {
+                        // Build new LSP range
+                        let new_lsp_range = format!(
+                            r#"{{"start":{{"line":{},"character":0}},"end":{{"line":{},"character":0}}}}"#,
+                            symbol.start_line.saturating_sub(1), // LSP is 0-indexed
+                            symbol.end_line.saturating_sub(1)
+                        );
+
                         // Update the reference
-                        let update_params = UpdateReferenceParams {
-                            start_line: Some(symbol.start_line),
-                            end_line: Some(symbol.end_line),
+                        let update_params = UpdateCodeReferenceParams {
+                            lsp_range: Some(&new_lsp_range),
                             ..Default::default()
                         };
 
                         doc_repo
-                            .update_reference(&doc_ref.id, update_params)
+                            .update_code_reference(&code_ref.id, update_params)
                             .await
                             .map_err(|e: AppError| McpError::from(e))?;
 
                         updated.push(UpdatedReference {
-                            id: doc_ref.id.clone(),
+                            id: code_ref.id.clone(),
                             symbol_name: lsp_symbol_name.clone(),
-                            old_start_line: doc_ref.start_line,
+                            old_start_line: current_start,
                             new_start_line: symbol.start_line,
-                            old_end_line: doc_ref.end_line,
+                            old_end_line: current_end,
                             new_end_line: symbol.end_line,
                         });
                     }
@@ -395,6 +412,26 @@ impl McpServer {
 
         Response(result).into()
     }
+}
+
+/// Parse LSP range string to extract start and end lines.
+fn parse_lsp_range_lines(lsp_range: &str) -> Option<(u32, u32)> {
+    // Try JSON format first: {"start":{"line":X,"character":Y},"end":{"line":Z,"character":W}}
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(lsp_range) {
+        let start_line = value.get("start")?.get("line")?.as_u64()? as u32 + 1; // LSP is 0-indexed
+        let end_line = value.get("end")?.get("line")?.as_u64()? as u32 + 1;
+        return Some((start_line, end_line));
+    }
+
+    // Try simple format: "start_line:start_char-end_line:end_char"
+    let parts: Vec<&str> = lsp_range.split('-').collect();
+    if parts.len() == 2 {
+        let start = parts[0].split(':').next()?.parse().ok()?;
+        let end = parts[1].split(':').next()?.parse().ok()?;
+        return Some((start, end));
+    }
+
+    None
 }
 
 /// Map LSP SymbolKind to scope and category suggestions.

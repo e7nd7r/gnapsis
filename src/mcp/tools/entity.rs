@@ -12,9 +12,10 @@ use crate::context::AppEmbedder;
 use crate::error::AppError;
 use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
-use crate::models::{generate_ulid, ContentType, Entity};
+use crate::models::{generate_ulid, Entity};
 use crate::repositories::{
-    CategoryRepository, CreateReferenceParams, DocumentRepository, EntityRepository,
+    CategoryRepository, CreateCodeReferenceParams, CreateTextReferenceParams, DocumentRepository,
+    EntityRepository,
 };
 
 // ============================================================================
@@ -90,6 +91,9 @@ pub struct AddRelatedParams {
     /// Optional relation type description.
     #[serde(default)]
     pub relation_type: Option<String>,
+    /// Optional note describing the relationship (auto-embedded for semantic search).
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Parameters for add_link tool.
@@ -104,34 +108,44 @@ pub struct AddLinkParams {
 }
 
 /// Document reference input for add_references tool.
+///
+/// For code files: provide lsp_symbol, lsp_kind, lsp_range, and language (e.g., "rust").
+/// For text files: provide start_line, end_line, and optionally anchor (e.g., "## Section").
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DocumentRefInput {
     /// Path to the document (relative to repo root).
     pub document_path: String,
-    /// Starting line number (1-indexed).
-    pub start_line: u32,
-    /// Ending line number (1-indexed).
-    pub end_line: u32,
     /// Description of what this reference points to (auto-embedded).
     pub description: String,
-    /// Content type: "code:rust", "code:typescript", "markdown", etc.
+    /// Content type: "code:rust", "code:typescript", "markdown", "text", etc.
+    /// Use "code:<language>" for code files, otherwise it's treated as text.
     #[serde(default)]
     pub content_type: Option<String>,
-    /// Character offset within the file (optional).
-    #[serde(default)]
-    pub offset: Option<u32>,
     /// Git commit SHA (defaults to HEAD).
     #[serde(default)]
     pub commit_sha: Option<String>,
-    /// LSP symbol name (optional).
+
+    // --- Code reference fields (required for code files) ---
+    /// LSP symbol name (e.g., "impl Foo::bar"). Required for code references.
     #[serde(default)]
     pub lsp_symbol: Option<String>,
-    /// LSP symbol kind (optional).
+    /// LSP symbol kind (from LSP SymbolKind enum). Required for code references.
     #[serde(default)]
     pub lsp_kind: Option<i32>,
-    /// LSP range as string (optional).
+    /// LSP range as JSON string. Required for code references.
     #[serde(default)]
     pub lsp_range: Option<String>,
+
+    // --- Text reference fields (required for text files) ---
+    /// Starting line number (1-indexed). Required for text references.
+    #[serde(default)]
+    pub start_line: Option<u32>,
+    /// Ending line number (1-indexed). Required for text references.
+    #[serde(default)]
+    pub end_line: Option<u32>,
+    /// Optional semantic anchor (e.g., "## Architecture", "### Overview").
+    #[serde(default)]
+    pub anchor: Option<String>,
 }
 
 /// Parameters for add_references tool.
@@ -514,6 +528,8 @@ impl McpServer {
     }
 
     /// Add RELATED_TO relationships between entities.
+    ///
+    /// If a note is provided, it will be auto-embedded for semantic search.
     #[tool(description = "Add RELATED_TO relationships between entities.")]
     pub async fn add_related(
         &self,
@@ -526,10 +542,27 @@ impl McpServer {
         );
 
         let entity_repo = self.resolve::<EntityRepository>();
+        let embedder = self.resolve::<AppEmbedder>();
+
+        // Generate embedding for note if provided
+        let embedding =
+            if let Some(ref note) = params.note {
+                Some(embedder.embed(note).map_err(|e| {
+                    McpError::internal_error(format!("Embedding error: {}", e), None)
+                })?)
+            } else {
+                None
+            };
 
         for to_id in &params.to_ids {
             entity_repo
-                .add_related(&params.from_id, to_id, params.relation_type.as_deref())
+                .add_related(
+                    &params.from_id,
+                    to_id,
+                    params.relation_type.as_deref(),
+                    params.note.as_deref(),
+                    embedding.as_deref(),
+                )
                 .await
                 .map_err(|e: AppError| McpError::from(e))?;
         }
@@ -589,6 +622,8 @@ impl McpServer {
     /// Add document references to an entity.
     ///
     /// Descriptions are auto-embedded for semantic search.
+    /// For code files, provide lsp_symbol, lsp_kind, lsp_range.
+    /// For text files, provide start_line, end_line, and optionally anchor.
     #[tool(description = "Add document references to an entity with auto-embedding.")]
     pub async fn add_references(
         &self,
@@ -611,44 +646,83 @@ impl McpServer {
                 .embed(&ref_input.description)
                 .map_err(|e| McpError::internal_error(format!("Embedding error: {}", e), None))?;
 
-            // Parse content type
-            let content_type = ref_input
+            let commit_sha = ref_input.commit_sha.as_deref().unwrap_or("HEAD");
+
+            // Determine if this is a code or text reference based on content_type
+            let is_code = ref_input
                 .content_type
                 .as_ref()
-                .map(|ct| {
-                    if ct.starts_with("code:") {
-                        ContentType::Code(ct.strip_prefix("code:").unwrap().to_string())
-                    } else if ct == "markdown" {
-                        ContentType::Markdown
-                    } else {
-                        ContentType::Code(ct.clone())
-                    }
-                })
-                .unwrap_or(ContentType::Markdown);
+                .map(|ct| ct.starts_with("code:"))
+                .unwrap_or(false);
 
-            let doc_ref = doc_repo
-                .create_reference(CreateReferenceParams {
-                    entity_id: &params.entity_id,
-                    document_path: &ref_input.document_path,
-                    start_line: ref_input.start_line,
-                    end_line: ref_input.end_line,
-                    offset: ref_input.offset,
-                    commit_sha: ref_input.commit_sha.as_deref().unwrap_or("HEAD"),
-                    content_type: &content_type,
-                    description: &ref_input.description,
-                    embedding: Some(&embedding),
-                    lsp_symbol: ref_input.lsp_symbol.as_deref(),
-                    lsp_kind: ref_input.lsp_kind,
-                    lsp_range: ref_input.lsp_range.as_deref(),
-                })
-                .await
-                .map_err(|e: AppError| McpError::from(e))?;
+            let (ref_id, ref_path) = if is_code {
+                // Code reference - requires LSP fields
+                let lsp_symbol = ref_input.lsp_symbol.as_deref().ok_or_else(|| {
+                    McpError::invalid_params("lsp_symbol is required for code references", None)
+                })?;
+                let lsp_kind = ref_input.lsp_kind.ok_or_else(|| {
+                    McpError::invalid_params("lsp_kind is required for code references", None)
+                })?;
+                let lsp_range = ref_input.lsp_range.as_deref().ok_or_else(|| {
+                    McpError::invalid_params("lsp_range is required for code references", None)
+                })?;
+
+                let language = ref_input
+                    .content_type
+                    .as_ref()
+                    .and_then(|ct| ct.strip_prefix("code:"))
+                    .unwrap_or("unknown");
+
+                let code_ref = doc_repo
+                    .create_code_reference(CreateCodeReferenceParams {
+                        entity_id: &params.entity_id,
+                        path: &ref_input.document_path,
+                        language,
+                        commit_sha,
+                        description: &ref_input.description,
+                        embedding: Some(&embedding),
+                        lsp_symbol,
+                        lsp_kind,
+                        lsp_range,
+                    })
+                    .await
+                    .map_err(|e: AppError| McpError::from(e))?;
+
+                (code_ref.id, code_ref.path)
+            } else {
+                // Text reference - requires line numbers
+                let start_line = ref_input.start_line.ok_or_else(|| {
+                    McpError::invalid_params("start_line is required for text references", None)
+                })?;
+                let end_line = ref_input.end_line.ok_or_else(|| {
+                    McpError::invalid_params("end_line is required for text references", None)
+                })?;
+
+                let content_type = ref_input.content_type.as_deref().unwrap_or("markdown");
+
+                let text_ref = doc_repo
+                    .create_text_reference(CreateTextReferenceParams {
+                        entity_id: &params.entity_id,
+                        path: &ref_input.document_path,
+                        content_type,
+                        commit_sha,
+                        description: &ref_input.description,
+                        embedding: Some(&embedding),
+                        start_line,
+                        end_line,
+                        anchor: ref_input.anchor.as_deref(),
+                    })
+                    .await
+                    .map_err(|e: AppError| McpError::from(e))?;
+
+                (text_ref.id, text_ref.path)
+            };
 
             created_refs.push(DocumentRefResult {
-                id: doc_ref.id,
-                document_path: doc_ref.document_path,
-                start_line: doc_ref.start_line,
-                end_line: doc_ref.end_line,
+                id: ref_id,
+                document_path: ref_path,
+                start_line: ref_input.start_line.unwrap_or(0),
+                end_line: ref_input.end_line.unwrap_or(0),
             });
         }
 

@@ -12,8 +12,8 @@ use crate::error::AppError;
 use crate::git::{ChangeType, ChangedFile, DiffHunk, FileDiff, GitOps};
 use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
-use crate::models::DocumentReference;
-use crate::repositories::{DocumentRepository, UpdateReferenceParams};
+use crate::models::Reference;
+use crate::repositories::{DocumentRepository, UpdateTextReferenceParams};
 
 // ============================================================================
 // Parameter Types
@@ -231,7 +231,8 @@ impl McpServer {
         let mut updated_ids = Vec::new();
 
         for update in &params.updates {
-            let update_params = UpdateReferenceParams {
+            // sync_references updates TextReferences (line-based references)
+            let update_params = UpdateTextReferenceParams {
                 start_line: Some(update.start_line),
                 end_line: Some(update.end_line),
                 commit_sha: Some(&head_sha),
@@ -239,7 +240,7 @@ impl McpServer {
             };
 
             doc_repo
-                .update_reference(&update.id, update_params)
+                .update_text_reference(&update.id, update_params)
                 .await
                 .map_err(|e: AppError| McpError::from(e))?;
 
@@ -294,7 +295,7 @@ impl McpServer {
             for doc_ref in refs {
                 // Check if the file changed between reference commit and HEAD
                 let file_diff = git
-                    .get_file_diff(&doc_ref.document_path, &doc_ref.commit_sha, Some(&head_sha))
+                    .get_file_diff(doc_ref.path(), doc_ref.commit_sha(), Some(&head_sha))
                     .map_err(McpError::from)?;
 
                 // Only include if file actually changed
@@ -406,21 +407,27 @@ impl McpServer {
             .iter()
             .map(|r| {
                 // Only stale if the file actually changed between commits
-                let is_stale = if r.commit_sha == head_sha {
+                let is_stale = if r.commit_sha() == head_sha {
                     false
                 } else {
                     // Check if file has changes between reference commit and HEAD
-                    git.get_file_diff(&r.document_path, &r.commit_sha, Some(&head_sha))
+                    git.get_file_diff(r.path(), r.commit_sha(), Some(&head_sha))
                         .map(|diff| diff.is_some()) // Some means file changed
                         .unwrap_or(false)
                 };
 
+                // Get start_line and end_line based on reference type
+                let (start_line, end_line) = match r {
+                    Reference::Text(tr) => (tr.start_line, tr.end_line),
+                    Reference::Code(cr) => parse_lsp_range_lines(&cr.lsp_range).unwrap_or((0, 0)),
+                };
+
                 DocumentReferenceInfo {
-                    id: r.id.clone(),
-                    start_line: r.start_line,
-                    end_line: r.end_line,
-                    description: r.description.clone(),
-                    commit_sha: r.commit_sha.clone(),
+                    id: r.id().to_string(),
+                    start_line,
+                    end_line,
+                    description: r.description().to_string(),
+                    commit_sha: r.commit_sha().to_string(),
                     is_stale,
                 }
             })
@@ -448,14 +455,23 @@ impl McpServer {
 /// Build a StaleReference with diff context.
 fn build_stale_reference(
     _git: &GitOps,
-    doc_ref: &DocumentReference,
+    doc_ref: &Reference,
     _head_sha: &str,
     file_diff: Option<FileDiff>,
 ) -> Result<StaleReference, McpError> {
+    // Get start_line and end_line based on reference type
+    let (start_line, end_line) = match doc_ref {
+        Reference::Text(r) => (r.start_line, r.end_line),
+        Reference::Code(r) => {
+            // For code references, parse lsp_range to get line info
+            // Format: "start_line:start_char-end_line:end_char" or JSON
+            parse_lsp_range_lines(&r.lsp_range).unwrap_or((0, 0))
+        }
+    };
+
     let (in_changed_region, affected_hunks) = match file_diff {
         Some(diff) => {
-            let in_region =
-                GitOps::is_in_changed_region(&diff.hunks, doc_ref.start_line, doc_ref.end_line);
+            let in_region = GitOps::is_in_changed_region(&diff.hunks, start_line, end_line);
 
             // Only include hunks that affect this reference
             let affected: Vec<HunkInfo> = if in_region {
@@ -463,7 +479,7 @@ fn build_stale_reference(
                     .iter()
                     .filter(|h| {
                         let hunk_end = h.old_start + h.old_lines.saturating_sub(1);
-                        doc_ref.start_line <= hunk_end && doc_ref.end_line >= h.old_start
+                        start_line <= hunk_end && end_line >= h.old_start
                     })
                     .map(HunkInfo::from)
                     .collect()
@@ -477,13 +493,33 @@ fn build_stale_reference(
     };
 
     Ok(StaleReference {
-        id: doc_ref.id.clone(),
-        document_path: doc_ref.document_path.clone(),
-        start_line: doc_ref.start_line,
-        end_line: doc_ref.end_line,
-        reference_commit: doc_ref.commit_sha.clone(),
-        description: doc_ref.description.clone(),
+        id: doc_ref.id().to_string(),
+        document_path: doc_ref.path().to_string(),
+        start_line,
+        end_line,
+        reference_commit: doc_ref.commit_sha().to_string(),
+        description: doc_ref.description().to_string(),
         in_changed_region,
         affected_hunks,
     })
+}
+
+/// Parse LSP range string to extract start and end lines.
+fn parse_lsp_range_lines(lsp_range: &str) -> Option<(u32, u32)> {
+    // Try JSON format first: {"start":{"line":X,"character":Y},"end":{"line":Z,"character":W}}
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(lsp_range) {
+        let start_line = value.get("start")?.get("line")?.as_u64()? as u32 + 1; // LSP is 0-indexed
+        let end_line = value.get("end")?.get("line")?.as_u64()? as u32 + 1;
+        return Some((start_line, end_line));
+    }
+
+    // Try simple format: "start_line:start_char-end_line:end_char"
+    let parts: Vec<&str> = lsp_range.split('-').collect();
+    if parts.len() == 2 {
+        let start = parts[0].split(':').next()?.parse().ok()?;
+        let end = parts[1].split(':').next()?.parse().ok()?;
+        return Some((start, end));
+    }
+
+    None
 }
