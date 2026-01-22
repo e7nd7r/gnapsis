@@ -266,6 +266,56 @@ impl EntityRepository {
         Ok(())
     }
 
+    /// Remove a RELATED_TO relationship between entities.
+    pub async fn remove_related(&self, from_id: &str, to_id: &str) -> Result<(), AppError> {
+        self.graph
+            .run(
+                query(
+                    "MATCH (from:Entity {id: $from_id})-[r:RELATED_TO]->(to:Entity {id: $to_id})
+                     DELETE r",
+                )
+                .param("from_id", from_id)
+                .param("to_id", to_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Remove a link relationship (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES).
+    pub async fn remove_link(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        link_type: &str,
+    ) -> Result<(), AppError> {
+        // Validate link type
+        let valid_types = ["CALLS", "IMPORTS", "IMPLEMENTS", "INSTANTIATES"];
+        if !valid_types.contains(&link_type) {
+            return Err(AppError::Query {
+                message: format!(
+                    "Invalid link type: {}. Must be one of {:?}",
+                    link_type, valid_types
+                ),
+                query: "remove_link".to_string(),
+            });
+        }
+
+        // Use APOC to delete dynamic relationship type
+        self.graph
+            .run(
+                query(
+                    "MATCH (from:Entity {id: $from_id})-[r]->(to:Entity {id: $to_id})
+                     WHERE type(r) = $link_type
+                     DELETE r",
+                )
+                .param("from_id", from_id)
+                .param("to_id", to_id)
+                .param("link_type", link_type),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Get entity with its children (BELONGS_TO relationships).
     pub async fn get_children(&self, entity_id: &str) -> Result<Vec<Entity>, AppError> {
         let mut result = self
