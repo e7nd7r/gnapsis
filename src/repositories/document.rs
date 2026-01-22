@@ -313,6 +313,74 @@ impl DocumentRepository {
     // Common Reference operations
     // ============================================
 
+    /// Find a reference by ID (either CodeReference or TextReference).
+    pub async fn find_reference_by_id(&self, id: &str) -> Result<Option<Reference>, AppError> {
+        // Try CodeReference first
+        let mut code_result = self
+            .graph
+            .execute(query("MATCH (ref:CodeReference {id: $id}) RETURN ref").param("id", id))
+            .await?;
+
+        if let Some(row) = code_result.next().await? {
+            return Ok(Some(Reference::Code(Self::row_to_code_reference(&row)?)));
+        }
+
+        // Try TextReference
+        let mut text_result = self
+            .graph
+            .execute(query("MATCH (ref:TextReference {id: $id}) RETURN ref").param("id", id))
+            .await?;
+
+        if let Some(row) = text_result.next().await? {
+            return Ok(Some(Reference::Text(Self::row_to_text_reference(&row)?)));
+        }
+
+        Ok(None)
+    }
+
+    /// Attach a reference to an entity (creates HAS_REFERENCE relationship).
+    pub async fn attach_reference(
+        &self,
+        entity_id: &str,
+        reference_id: &str,
+    ) -> Result<(), AppError> {
+        self.graph
+            .run(
+                query(
+                    "MATCH (e:Entity {id: $entity_id})
+                     OPTIONAL MATCH (code:CodeReference {id: $ref_id})
+                     OPTIONAL MATCH (text:TextReference {id: $ref_id})
+                     WITH e, coalesce(code, text) AS ref
+                     WHERE ref IS NOT NULL
+                     MERGE (e)-[:HAS_REFERENCE]->(ref)",
+                )
+                .param("entity_id", entity_id)
+                .param("ref_id", reference_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Detach a reference from an entity (removes HAS_REFERENCE relationship).
+    pub async fn detach_reference(
+        &self,
+        entity_id: &str,
+        reference_id: &str,
+    ) -> Result<(), AppError> {
+        self.graph
+            .run(
+                query(
+                    "MATCH (e:Entity {id: $entity_id})-[r:HAS_REFERENCE]->(ref)
+                     WHERE ref.id = $ref_id
+                     DELETE r",
+                )
+                .param("entity_id", entity_id)
+                .param("ref_id", reference_id),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Delete a reference (works for both CodeReference and TextReference).
     pub async fn delete_reference(&self, id: &str) -> Result<(), AppError> {
         self.graph
