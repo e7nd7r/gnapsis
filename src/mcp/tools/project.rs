@@ -366,7 +366,10 @@ fn generate_skill_file(
     if !features.is_empty() {
         content.push_str("## Features\n\n");
         for feature in features {
-            content.push_str(&format!("- **{}**: {}\n", feature.name, feature.description));
+            content.push_str(&format!(
+                "- **{}**: {}\n",
+                feature.name, feature.description
+            ));
         }
         content.push('\n');
     }
