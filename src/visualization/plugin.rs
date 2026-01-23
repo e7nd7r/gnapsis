@@ -5,12 +5,10 @@ use std::sync::Mutex;
 
 use super::graph::GraphLayout;
 use super::nvim::NvimClient;
-use super::resources::{
-    CameraOrbit, CurrentSelection, DragState, GraphLayoutRes, NvimClientRes, SubgraphDataRes,
-};
+use super::resources::{CameraOrbit, CurrentSelection, DragState, GraphLayoutRes, NvimClientRes};
 use super::setup::setup_scene;
 use super::systems;
-use crate::models::Subgraph;
+use crate::models::QueryGraph;
 
 /// Plugin that adds 3D graph visualization.
 ///
@@ -19,8 +17,8 @@ use crate::models::Subgraph;
 pub struct VisualizationPlugin {
     /// Pre-computed graph layout.
     pub layout: GraphLayout,
-    /// Original subgraph data for DocumentReference lookups.
-    pub subgraph_data: Option<Subgraph>,
+    /// Query graph data for reference lookups.
+    pub query_graph: QueryGraph,
     /// Neovim client for file navigation (taken during build).
     pub nvim_client: Mutex<Option<NvimClient>>,
 }
@@ -29,12 +27,12 @@ impl VisualizationPlugin {
     /// Create a new visualization plugin.
     pub fn new(
         layout: GraphLayout,
-        subgraph_data: Option<Subgraph>,
+        query_graph: QueryGraph,
         nvim_client: Option<NvimClient>,
     ) -> Self {
         Self {
             layout,
-            subgraph_data,
+            query_graph,
             nvim_client: Mutex::new(nvim_client),
         }
     }
@@ -45,11 +43,12 @@ impl Plugin for VisualizationPlugin {
         // Take ownership of nvim_client (moves it out, leaves None)
         let nvim_client = self.nvim_client.lock().unwrap().take();
 
-        app.insert_resource(CameraOrbit::default())
+        // Only insert CameraOrbit if not already set (allows pre-configuration)
+        app.init_resource::<CameraOrbit>()
             .insert_resource(DragState::default())
             .insert_resource(CurrentSelection::default())
             .insert_resource(GraphLayoutRes(self.layout.clone()))
-            .insert_resource(SubgraphDataRes(self.subgraph_data.clone()))
+            .insert_resource(systems::QueryGraphRes(self.query_graph.clone()))
             .insert_resource(NvimClientRes(Mutex::new(nvim_client)))
             .add_systems(Startup, setup_scene)
             .add_systems(

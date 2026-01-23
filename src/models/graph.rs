@@ -1,87 +1,8 @@
-//! Graph traversal models for subgraph queries and composition hierarchies.
+//! Graph models for query results and entity context.
 
 use serde::{Deserialize, Serialize};
 
 use super::{Entity, Reference};
-
-/// Node in a subgraph traversal - either an Entity or DocumentReference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SubgraphNode {
-    /// An entity node in the subgraph.
-    Entity {
-        /// Entity ID.
-        id: String,
-        /// Entity name.
-        name: String,
-        /// Entity description.
-        description: String,
-        /// Distance from the starting node.
-        distance: u32,
-        /// Category classification (if any).
-        category: Option<String>,
-    },
-    /// A document reference node in the subgraph.
-    DocumentReference {
-        /// Reference ID.
-        id: String,
-        /// Path to the document.
-        document_path: String,
-        /// Starting line number (1-indexed).
-        start_line: u32,
-        /// Ending line number (1-indexed).
-        end_line: u32,
-        /// Description of what this reference points to.
-        description: String,
-        /// Distance from the starting node.
-        distance: u32,
-    },
-}
-
-/// Edge in a subgraph traversal.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubgraphEdge {
-    /// Source node ID.
-    pub from_id: String,
-    /// Target node ID.
-    pub to_id: String,
-    /// Relationship type (e.g., BELONGS_TO, HAS_REFERENCE, CALLS).
-    pub relationship: String,
-    /// Optional note on the relationship.
-    pub note: Option<String>,
-}
-
-/// A complete subgraph with nodes and edges.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Subgraph {
-    /// All nodes in the subgraph.
-    pub nodes: Vec<SubgraphNode>,
-    /// All edges in the subgraph.
-    pub edges: Vec<SubgraphEdge>,
-}
-
-/// Node in a composition hierarchy traversal.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompositionNode {
-    /// Entity ID.
-    pub id: String,
-    /// Entity name.
-    pub name: String,
-    /// Depth from the starting entity (positive for ancestors, negative for descendants).
-    pub depth: i32,
-    /// Category classification (if any).
-    pub category: Option<String>,
-}
-
-/// Result of a composition graph query.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompositionGraph {
-    /// The starting entity.
-    pub entity: CompositionNode,
-    /// Ancestor entities (via BELONGS_TO outward).
-    pub ancestors: Vec<CompositionNode>,
-    /// Descendant entities (via BELONGS_TO inward).
-    pub descendants: Vec<CompositionNode>,
-}
 
 /// Category classification with scope information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,4 +48,102 @@ pub struct SearchResult<T> {
     pub item: T,
     /// Similarity score (0.0 to 1.0).
     pub score: f32,
+}
+
+// ============================================================================
+// Semantic Query Graph (Budget-Aware BFS Results)
+// ============================================================================
+
+/// A node in the semantic query graph - either an Entity or a DocumentReference.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum QueryGraphNode {
+    /// An entity node.
+    Entity {
+        /// Entity ID.
+        id: String,
+        /// Entity name.
+        name: String,
+        /// Entity description.
+        description: String,
+        /// Scope (if classified).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
+        /// Semantic relevance to the query (0.0 to 1.0).
+        relevance: f32,
+    },
+    /// A document reference node (code or text).
+    Reference {
+        /// Reference ID.
+        id: String,
+        /// Path to the document.
+        document_path: String,
+        /// Starting line number (1-indexed).
+        start_line: u32,
+        /// Ending line number (1-indexed).
+        end_line: u32,
+        /// Description of what this reference points to.
+        description: String,
+        /// Relevance inherited from parent entity.
+        relevance: f32,
+    },
+}
+
+/// An edge in the semantic query graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryGraphEdge {
+    /// Source node ID.
+    pub from_id: String,
+    /// Target node ID.
+    pub to_id: String,
+    /// Relationship type (BELONGS_TO, RELATED_TO, CALLS, etc.).
+    pub relationship: String,
+    /// Optional note on the relationship.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Relevance score when this edge was traversed.
+    pub relevance: f32,
+}
+
+/// Summary of an entity for query results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryEntitySummary {
+    /// Entity ID.
+    pub id: String,
+    /// Entity name.
+    pub name: String,
+    /// Entity description.
+    pub description: String,
+    /// Scope (if classified).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Category (if classified).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+/// Statistics about the semantic query execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryGraphStats {
+    /// Number of nodes visited during BFS.
+    pub nodes_visited: usize,
+    /// Number of nodes pruned (budget or relevance).
+    pub nodes_pruned: usize,
+    /// Estimated token count of included nodes.
+    pub estimated_tokens: usize,
+}
+
+/// Result of a semantic subgraph query using Best-First Search.
+///
+/// Contains relevance-scored nodes and edges within token/node budgets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryGraph {
+    /// The starting/root entity.
+    pub root_entity: QueryEntitySummary,
+    /// Nodes included in the result (sorted by relevance).
+    pub nodes: Vec<QueryGraphNode>,
+    /// Edges between included nodes.
+    pub edges: Vec<QueryGraphEdge>,
+    /// Query execution statistics.
+    pub stats: QueryGraphStats,
 }

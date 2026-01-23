@@ -115,10 +115,8 @@ Note: Classification is done via `category_ids` on create/update. Relationships 
 - **get_entity** - Get entity with full context (classifications, references, hierarchy)
 - **find_entities** - Find entities by scope, category, or parent
 - **get_document_entities** - Get all entities in a document
-- **get_composition_graph** - Get ancestors and descendants via BELONGS_TO
-- **query_subgraph** - Extract subgraph within N hops
-- **search_documents** - Semantic search on document references
-- **semantic_search** - Semantic search on entities
+- **search** - Unified semantic search across entities and/or references. Use `target` param: "entities", "references", or "all"
+- **query** - Semantic subgraph extraction with Best-First Search. Budget-aware (max_tokens, max_nodes). Scoring strategies: "global" or "branch_penalty"
 
 ## Sync Tools
 

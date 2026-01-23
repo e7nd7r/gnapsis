@@ -3,7 +3,7 @@
 use bevy::math::Vec3;
 use std::collections::HashMap;
 
-use crate::models::{CompositionGraph, Subgraph, SubgraphNode};
+use crate::models::{QueryGraph, QueryGraphNode};
 
 /// Physics constants for force-directed layout.
 const REPULSION_STRENGTH: f32 = 8000.0; // Close-range repulsion
@@ -70,25 +70,29 @@ pub struct GraphLayout {
 }
 
 impl GraphLayout {
-    /// Create layout from a Subgraph.
-    pub fn from_subgraph(subgraph: &Subgraph, start_id: &str) -> Self {
+    /// Create layout from a QueryGraph (semantic query result).
+    pub fn from_query_graph(graph: &QueryGraph) -> Self {
         let mut nodes = Vec::new();
         let mut id_to_idx = HashMap::new();
+        let total_nodes = graph.nodes.len();
 
-        // Create nodes with random initial positions (mass set later)
-        for (i, node) in subgraph.nodes.iter().enumerate() {
+        // Create nodes from query result
+        for (i, node) in graph.nodes.iter().enumerate() {
             let (id, label, node_type) = match node {
-                SubgraphNode::Entity {
-                    id, name, distance, ..
+                QueryGraphNode::Entity {
+                    id,
+                    name,
+                    relevance: _,
+                    ..
                 } => {
-                    let nt = if *distance == 0 {
+                    let nt = if id == &graph.root_entity.id {
                         NodeType::StartNode
                     } else {
                         NodeType::Entity
                     };
                     (id.clone(), name.clone(), nt)
                 }
-                SubgraphNode::DocumentReference {
+                QueryGraphNode::Reference {
                     id,
                     document_path,
                     start_line,
@@ -100,8 +104,8 @@ impl GraphLayout {
                 }
             };
 
-            let is_start = id == start_id;
-            let position = random_position(i);
+            let is_start = matches!(node_type, NodeType::StartNode);
+            let position = random_position(i, total_nodes);
 
             id_to_idx.insert(id.clone(), nodes.len());
             nodes.push(LayoutNode {
@@ -111,12 +115,12 @@ impl GraphLayout {
                 velocity: Vec3::ZERO,
                 node_type,
                 is_start,
-                mass: MIN_MASS, // Temporary, will be recalculated
+                mass: MIN_MASS,
             });
         }
 
         // Create edges
-        let edges: Vec<LayoutEdge> = subgraph
+        let edges: Vec<LayoutEdge> = graph
             .edges
             .iter()
             .filter_map(|e| {
@@ -130,89 +134,6 @@ impl GraphLayout {
                 })
             })
             .collect();
-
-        // Count connections per node and distribute mass
-        distribute_mass(&mut nodes, &edges);
-
-        Self {
-            nodes,
-            edges,
-            stable: false,
-        }
-    }
-
-    /// Create layout from a CompositionGraph.
-    pub fn from_composition(graph: &CompositionGraph) -> Self {
-        let mut nodes = Vec::new();
-        let mut id_to_idx = HashMap::new();
-        let mut edges = Vec::new();
-
-        // Add root entity
-        let root_id = graph.entity.id.clone();
-        id_to_idx.insert(root_id.clone(), 0);
-        nodes.push(LayoutNode {
-            id: root_id.clone(),
-            label: graph.entity.name.clone(),
-            position: Vec3::ZERO,
-            velocity: Vec3::ZERO,
-            node_type: NodeType::StartNode,
-            is_start: true,
-            mass: MIN_MASS,
-        });
-
-        // Add ancestors (positioned above)
-        for (i, ancestor) in graph.ancestors.iter().enumerate() {
-            let idx = nodes.len();
-            id_to_idx.insert(ancestor.id.clone(), idx);
-            nodes.push(LayoutNode {
-                id: ancestor.id.clone(),
-                label: ancestor.name.clone(),
-                position: Vec3::new(
-                    (i as f32 - graph.ancestors.len() as f32 / 2.0) * IDEAL_LENGTH,
-                    ancestor.depth as f32 * IDEAL_LENGTH,
-                    0.0,
-                ),
-                velocity: Vec3::ZERO,
-                node_type: NodeType::Entity,
-                is_start: false,
-                mass: MIN_MASS,
-            });
-
-            // Edge from child to parent (BELONGS_TO)
-            edges.push(LayoutEdge {
-                from_idx: 0,
-                to_idx: idx,
-                label: "BELONGS_TO".to_string(),
-                note: None,
-            });
-        }
-
-        // Add descendants (positioned below)
-        for (i, descendant) in graph.descendants.iter().enumerate() {
-            let idx = nodes.len();
-            id_to_idx.insert(descendant.id.clone(), idx);
-            nodes.push(LayoutNode {
-                id: descendant.id.clone(),
-                label: descendant.name.clone(),
-                position: Vec3::new(
-                    (i as f32 - graph.descendants.len() as f32 / 2.0) * IDEAL_LENGTH,
-                    descendant.depth as f32 * -IDEAL_LENGTH,
-                    0.0,
-                ),
-                velocity: Vec3::ZERO,
-                node_type: NodeType::Entity,
-                is_start: false,
-                mass: MIN_MASS,
-            });
-
-            // Edge from descendant to root (BELONGS_TO)
-            edges.push(LayoutEdge {
-                from_idx: idx,
-                to_idx: 0,
-                label: "BELONGS_TO".to_string(),
-                note: None,
-            });
-        }
 
         // Distribute mass based on connections
         distribute_mass(&mut nodes, &edges);
@@ -301,6 +222,28 @@ impl GraphLayout {
             self.update_physics(dt);
         }
     }
+
+    /// Calculate the bounding sphere radius that encompasses all nodes.
+    /// Returns (center, radius) where center is the centroid of all nodes.
+    pub fn bounding_sphere(&self) -> (Vec3, f32) {
+        if self.nodes.is_empty() {
+            return (Vec3::ZERO, 1.0);
+        }
+
+        // Calculate centroid
+        let center: Vec3 =
+            self.nodes.iter().map(|n| n.position).sum::<Vec3>() / self.nodes.len() as f32;
+
+        // Find maximum distance from centroid
+        let max_dist = self
+            .nodes
+            .iter()
+            .map(|n| (n.position - center).length())
+            .fold(0.0_f32, |a, b| a.max(b));
+
+        // Add some padding
+        (center, max_dist + 2.0)
+    }
 }
 
 /// Distribute mass among nodes based on connection count (arity).
@@ -327,16 +270,19 @@ fn distribute_mass(nodes: &mut [LayoutNode], edges: &[LayoutEdge]) {
 
 /// Generate a random initial position in 3D space based on index.
 /// Uses Fibonacci sphere distribution for even spacing.
-fn random_position(i: usize) -> Vec3 {
+fn random_position(i: usize, total_nodes: usize) -> Vec3 {
     let golden_ratio = (1.0 + 5.0_f32.sqrt()) / 2.0;
     let idx = i as f32 + 0.5;
+    let n = total_nodes.max(1) as f32;
 
     // Fibonacci sphere - gives evenly distributed points on a sphere
     let theta = 2.0 * std::f32::consts::PI * idx / golden_ratio;
-    let phi = (1.0 - 2.0 * idx / 20.0).acos(); // Assume max ~20 nodes for distribution
+    // Use actual node count instead of hardcoded 20
+    let phi = (1.0 - 2.0 * idx / n).acos();
 
-    // Vary radius so nodes aren't all on same sphere
-    let radius = 3.0 + (i as f32 * 1.618).sin() * 2.0;
+    // Vary radius based on node count - larger graphs need more space
+    let base_radius = 3.0 + (n / 10.0).sqrt() * 2.0;
+    let radius = base_radius + (i as f32 * 1.618).sin() * 2.0;
 
     Vec3::new(
         radius * phi.sin() * theta.cos(),
