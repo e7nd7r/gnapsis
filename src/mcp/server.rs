@@ -131,7 +131,7 @@ Note: Classification is done via `category_ids` on create/update. Relationships 
 
 ## Validation & LSP Tools
 
-- **validate_graph** - Check graph integrity (orphans, cycles, scope violations, unclassified)
+- **validate_graph** - Check graph integrity (orphans, cycles, scope violations, unclassified, no references)
 - **lsp_refresh** - Refresh document references using LSP symbol locations
 "#
                 .to_string(),

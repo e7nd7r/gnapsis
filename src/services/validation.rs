@@ -160,4 +160,34 @@ impl ValidationService {
 
         Ok(issues)
     }
+
+    /// Find entities without any document references.
+    ///
+    /// All entities should have at least one reference anchoring them to code
+    /// or documentation. Entities without references are "floating knowledge"
+    /// that can't be verified against the codebase.
+    pub async fn find_entities_without_references(&self) -> Result<Vec<ValidationIssue>, AppError> {
+        let mut result = self
+            .graph
+            .execute(query(
+                "MATCH (e:Entity)
+                 WHERE NOT (e)-[:HAS_REFERENCE]->(:DocumentReference)
+                 RETURN e.id AS id, e.name AS name",
+            ))
+            .await?;
+
+        let mut issues = Vec::new();
+        while let Some(row) = result.next().await? {
+            let id: String = row.get("id").unwrap_or_default();
+            let name: String = row.get("name").unwrap_or_default();
+
+            issues.push(ValidationIssue {
+                entity_id: id,
+                entity_name: name,
+                issue: "Entity has no document references".to_string(),
+            });
+        }
+
+        Ok(issues)
+    }
 }

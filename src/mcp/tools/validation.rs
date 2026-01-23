@@ -34,6 +34,9 @@ pub struct ValidateGraphParams {
     /// Check for entities without any classification.
     #[serde(default = "default_true")]
     pub check_unclassified: Option<bool>,
+    /// Check for entities without any document references.
+    #[serde(default = "default_true")]
+    pub check_no_references: Option<bool>,
 }
 
 fn default_true() -> Option<bool> {
@@ -88,6 +91,9 @@ pub struct ValidateGraphResult {
     /// Entities without any classification.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unclassified: Vec<ValidationIssue>,
+    /// Entities without any document references.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub no_references: Vec<ValidationIssue>,
 }
 
 /// Result of LSP refresh.
@@ -148,6 +154,7 @@ impl McpServer {
             cycles: Vec::new(),
             scope_violations: Vec::new(),
             unclassified: Vec::new(),
+            no_references: Vec::new(),
         };
 
         // Check for orphans
@@ -174,10 +181,17 @@ impl McpServer {
             result.unclassified = unclassified;
         }
 
+        // Check for entities without references
+        if params.check_no_references.unwrap_or(true) {
+            let no_refs = service.find_entities_without_references().await?;
+            result.no_references = no_refs;
+        }
+
         result.issue_count = result.orphans.len()
             + result.cycles.len()
             + result.scope_violations.len()
-            + result.unclassified.len();
+            + result.unclassified.len()
+            + result.no_references.len();
         result.valid = result.issue_count == 0;
 
         tracing::info!(
