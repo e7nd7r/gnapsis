@@ -1,11 +1,8 @@
-//! Neovim client for visualization integration.
+//! Neovim visualization integration.
 //!
-//! Communicates with Neovim via Unix socket using msgpack-RPC.
+//! Provides visualization-specific operations on top of the NvimClient.
 
-use std::io::Write;
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+pub use crate::nvim::NvimClient;
 
 /// Information about a document reference for the picker.
 #[derive(Debug, Clone)]
@@ -20,122 +17,24 @@ pub struct DocRefInfo {
     pub description: String,
 }
 
-/// Neovim client for RPC communication.
-pub struct NvimClient {
-    socket_path: PathBuf,
-    stream: Option<UnixStream>,
-    msgid: AtomicU32,
+/// Extension trait for visualization operations on NvimClient.
+#[allow(dead_code)]
+pub trait NvimVisualization {
+    /// Open a file in Neovim and highlight a code region.
+    fn open_and_highlight(
+        &mut self,
+        file_path: &str,
+        start_line: u32,
+        end_line: u32,
+        description: &str,
+    ) -> Result<(), String>;
+
+    /// Show a persistent bottom panel with document references.
+    fn show_references_picker(&mut self, refs: &[DocRefInfo], title: &str) -> Result<(), String>;
 }
 
-impl NvimClient {
-    /// Create a new client with the given socket path.
-    pub fn new(socket_path: PathBuf) -> Self {
-        Self {
-            socket_path,
-            stream: None,
-            msgid: AtomicU32::new(0),
-        }
-    }
-
-    /// Try to find and connect to a Neovim socket.
-    /// Looks for .nvim/nvim.sock in current directory.
-    pub fn try_connect() -> Option<Self> {
-        let cwd = std::env::current_dir().ok()?;
-        let socket_path = cwd.join(".nvim").join("nvim.sock");
-
-        if socket_path.exists() {
-            let mut client = Self::new(socket_path);
-            if client.connect().is_ok() {
-                return Some(client);
-            }
-        }
-        None
-    }
-
-    /// Connect to the Neovim socket.
-    pub fn connect(&mut self) -> Result<(), String> {
-        match UnixStream::connect(&self.socket_path) {
-            Ok(stream) => {
-                stream.set_nonblocking(false).ok();
-                self.stream = Some(stream);
-                Ok(())
-            }
-            Err(e) => Err(format!("Failed to connect to nvim socket: {}", e)),
-        }
-    }
-
-    /// Ensure connection is established.
-    fn ensure_connected(&mut self) -> Result<&mut UnixStream, String> {
-        if self.stream.is_none() {
-            self.connect()?;
-        }
-        self.stream
-            .as_mut()
-            .ok_or_else(|| "No connection".to_string())
-    }
-
-    /// Execute Lua code in Neovim.
-    pub fn execute_lua(&mut self, code: &str) -> Result<rmpv::Value, String> {
-        self.call(
-            "nvim_exec_lua",
-            vec![rmpv::Value::String(code.into()), rmpv::Value::Array(vec![])],
-        )
-    }
-
-    /// Execute a Vim command.
-    pub fn command(&mut self, cmd: &str) -> Result<(), String> {
-        self.call("nvim_command", vec![rmpv::Value::String(cmd.into())])?;
-        Ok(())
-    }
-
-    /// Make an RPC call to Neovim.
-    fn call(&mut self, method: &str, args: Vec<rmpv::Value>) -> Result<rmpv::Value, String> {
-        // Get msgid before borrowing stream
-        let msgid = self.msgid.fetch_add(1, Ordering::SeqCst);
-        let stream = self.ensure_connected()?;
-
-        // Build request: [type=0, msgid, method, args]
-        let request = rmpv::Value::Array(vec![
-            rmpv::Value::Integer(0.into()),
-            rmpv::Value::Integer(msgid.into()),
-            rmpv::Value::String(method.into()),
-            rmpv::Value::Array(args),
-        ]);
-
-        // Serialize and send
-        let mut buf = Vec::new();
-        rmpv::encode::write_value(&mut buf, &request)
-            .map_err(|e| format!("Failed to encode request: {}", e))?;
-
-        stream
-            .write_all(&buf)
-            .map_err(|e| format!("Failed to write to socket: {}", e))?;
-        stream
-            .flush()
-            .map_err(|e| format!("Failed to flush socket: {}", e))?;
-
-        // Read response
-        let response = rmpv::decode::read_value(stream)
-            .map_err(|e| format!("Failed to read response: {}", e))?;
-
-        // Parse response: [type=1, msgid, error, result]
-        if let rmpv::Value::Array(parts) = response {
-            if parts.len() >= 4 {
-                let err = &parts[2];
-                let result = &parts[3];
-
-                if !err.is_nil() {
-                    return Err(format!("Neovim error: {:?}", err));
-                }
-                return Ok(result.clone());
-            }
-        }
-
-        Err("Invalid response format".to_string())
-    }
-
-    /// Open a file in Neovim and highlight a code region.
-    pub fn open_and_highlight(
+impl NvimVisualization for NvimClient {
+    fn open_and_highlight(
         &mut self,
         file_path: &str,
         start_line: u32,
@@ -192,16 +91,7 @@ impl NvimClient {
         Ok(())
     }
 
-    /// Show a persistent bottom panel with document references.
-    ///
-    /// Creates a horizontal split at the bottom that stays open while
-    /// the user navigates between files. Press number keys or Enter to
-    /// jump to a reference, 'q' to close the panel.
-    pub fn show_references_picker(
-        &mut self,
-        refs: &[DocRefInfo],
-        title: &str,
-    ) -> Result<(), String> {
+    fn show_references_picker(&mut self, refs: &[DocRefInfo], title: &str) -> Result<(), String> {
         if refs.is_empty() {
             return Ok(());
         }

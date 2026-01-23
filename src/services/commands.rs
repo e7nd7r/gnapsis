@@ -375,6 +375,8 @@ use crate::di::FromContext;
 use crate::error::AppError;
 use crate::repositories::{DocumentRepository, EntityRepository};
 
+use super::LspService;
+
 /// Service for executing entity commands.
 ///
 /// Processes commands sequentially, stopping on first failure.
@@ -384,6 +386,7 @@ pub struct CommandService {
     entity_repo: EntityRepository,
     doc_repo: DocumentRepository,
     embedder: AppEmbedder,
+    lsp: LspService,
 }
 
 impl CommandService {
@@ -537,21 +540,26 @@ impl CommandService {
             } => {
                 use crate::repositories::CreateCodeReferenceParams;
 
-                // Build LSP range string from start/end lines if provided
-                let lsp_range = match (start_line, end_line) {
-                    (Some(s), Some(e)) => format!("{}:0-{}:0", s, e),
-                    _ => String::new(),
+                // Try to validate via LSP
+                let lsp_info = self.validate_lsp_symbol(document_path, lsp_symbol)?;
+
+                // Use LSP data if available, otherwise fall back to provided values
+                let (final_start, final_end, final_kind) = match lsp_info {
+                    Some(sym) => (sym.start_line, sym.end_line, sym.kind),
+                    None => (start_line.unwrap_or(1), end_line.unwrap_or(1), 0),
                 };
+
+                let lsp_range = format!("{}:0-{}:0", final_start, final_end);
 
                 let params = CreateCodeReferenceParams {
                     entity_id,
                     path: document_path,
-                    language: "unknown", // Will be determined by LSP later
+                    language: "unknown", // Will be determined by file extension
                     commit_sha: &commit_sha,
                     description,
                     embedding: Some(&embedding),
                     lsp_symbol,
-                    lsp_kind: 0, // Unknown kind
+                    lsp_kind: final_kind,
                     lsp_range: &lsp_range,
                 };
 
@@ -595,6 +603,43 @@ impl CommandService {
         };
 
         Ok(CommandOutcome::Added { reference_id })
+    }
+
+    /// Validate LSP symbol and get its metadata.
+    ///
+    /// Validate a code reference symbol via LSP.
+    ///
+    /// Returns:
+    /// - `Ok(Some(symbol))` if LSP found it
+    /// - `Ok(None)` if LSP unavailable (caller uses fallback)
+    /// - `Err` if symbol not found (validation failure)
+    fn validate_lsp_symbol(
+        &self,
+        document_path: &str,
+        lsp_symbol: &str,
+    ) -> Result<Option<super::LspSymbol>, (String, Option<FailureContext>)> {
+        tracing::debug!(path = %document_path, symbol = %lsp_symbol, "Validating LSP symbol");
+
+        match self.lsp.find_symbol(document_path, lsp_symbol) {
+            Ok(symbol) => {
+                tracing::info!(
+                    symbol = %lsp_symbol,
+                    start = symbol.start_line,
+                    end = symbol.end_line,
+                    kind = symbol.kind,
+                    "LSP symbol found"
+                );
+                Ok(Some(symbol))
+            }
+            Err(ref err @ super::LspError::Unavailable(_)) => {
+                tracing::warn!(error = %err, "LSP unavailable, using fallback");
+                Ok(None)
+            }
+            Err(ref err @ super::LspError::SymbolNotFound { .. }) => {
+                tracing::warn!(error = %err, "LSP symbol not found");
+                Err((err.to_string(), Option::<FailureContext>::from(err)))
+            }
+        }
     }
 
     async fn execute_relate(

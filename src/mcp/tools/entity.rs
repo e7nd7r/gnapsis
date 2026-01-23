@@ -12,10 +12,10 @@ use crate::context::AppEmbedder;
 use crate::error::AppError;
 use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
-use crate::models::{generate_ulid, Entity};
-use crate::repositories::{
-    CategoryRepository, CreateCodeReferenceParams, CreateTextReferenceParams, DocumentRepository,
-    EntityRepository,
+use crate::models::Entity;
+use crate::repositories::{CategoryRepository, DocumentRepository, EntityRepository};
+use crate::services::{
+    CreateEntityInput, EntityCommand, EntityService, NewReference, UpdateEntityInput,
 };
 
 // ============================================================================
@@ -23,15 +23,30 @@ use crate::repositories::{
 // ============================================================================
 
 /// Parameters for create_entity tool.
+///
+/// Creates a new entity with mandatory classification, optional parents, and commands.
+/// At least one Add command is required to attach an initial reference.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateEntityParams {
     /// Human-readable name for the entity.
     pub name: String,
     /// Detailed description (auto-embedded for semantic search).
     pub description: String,
+    /// Category IDs for classification (required, non-empty).
+    pub category_ids: Vec<String>,
+    /// Parent entity IDs for BELONGS_TO relationships.
+    /// Required for non-Domain scope entities.
+    #[serde(default)]
+    pub parent_ids: Vec<String>,
+    /// Commands to execute. Must include at least one Add command.
+    #[serde(default)]
+    pub commands: Vec<EntityCommandInput>,
 }
 
 /// Parameters for update_entity tool.
+///
+/// Updates an existing entity. All fields are optional except entity_id.
+/// Categories and parents use replace semantics when provided.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateEntityParams {
     /// Entity ID to update.
@@ -42,6 +57,95 @@ pub struct UpdateEntityParams {
     /// New description (optional, re-embeds if changed).
     #[serde(default)]
     pub description: Option<String>,
+    /// Replace category IDs (optional). Replaces all existing categories.
+    #[serde(default)]
+    pub category_ids: Option<Vec<String>>,
+    /// Replace parent IDs (optional). Replaces all existing parents.
+    #[serde(default)]
+    pub parent_ids: Option<Vec<String>>,
+    /// Commands to execute.
+    #[serde(default)]
+    pub commands: Vec<EntityCommandInput>,
+}
+
+/// Command input for entity operations.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EntityCommandInput {
+    /// Attach an existing reference to this entity.
+    Attach {
+        /// ID of the reference to attach.
+        reference_id: String,
+    },
+    /// Detach a reference from this entity.
+    Unattach {
+        /// ID of the reference to detach.
+        reference_id: String,
+    },
+    /// Create and attach a new reference.
+    Add(NewReferenceInput),
+    /// Create a RELATED_TO relationship.
+    Relate {
+        /// Target entity ID.
+        entity_id: String,
+        /// Optional note (embedded for semantic search).
+        #[serde(default)]
+        note: Option<String>,
+    },
+    /// Remove a RELATED_TO relationship.
+    Unrelate {
+        /// Target entity ID.
+        entity_id: String,
+    },
+    /// Create a code link (Component/Unit only).
+    Link {
+        /// Target entity ID.
+        entity_id: String,
+        /// Link type: calls, imports, implements, instantiates.
+        link_type: String,
+    },
+    /// Remove a code link.
+    Unlink {
+        /// Target entity ID.
+        entity_id: String,
+        /// Link type: calls, imports, implements, instantiates.
+        link_type: String,
+    },
+}
+
+/// New reference input for Add command.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(tag = "ref_type", rename_all = "snake_case")]
+pub enum NewReferenceInput {
+    /// Code reference with LSP metadata.
+    Code {
+        /// Path to the source file.
+        document_path: String,
+        /// LSP symbol name (e.g., "impl Foo::bar").
+        lsp_symbol: String,
+        /// Description of what this reference points to.
+        description: String,
+        /// Start line (optional, from LSP).
+        #[serde(default)]
+        start_line: Option<u32>,
+        /// End line (optional, from LSP).
+        #[serde(default)]
+        end_line: Option<u32>,
+    },
+    /// Text reference with line range.
+    Text {
+        /// Path to the document.
+        document_path: String,
+        /// Description of what this reference points to.
+        description: String,
+        /// Starting line number.
+        start_line: u32,
+        /// Ending line number.
+        end_line: u32,
+        /// Optional anchor (e.g., "## Section").
+        #[serde(default)]
+        anchor: Option<String>,
+    },
 }
 
 /// Parameters for delete_entity tool.
@@ -107,56 +211,6 @@ pub struct AddLinkParams {
     pub link_type: String,
 }
 
-/// Document reference input for add_references tool.
-///
-/// For code files: provide lsp_symbol, lsp_kind, lsp_range, and language (e.g., "rust").
-/// For text files: provide start_line, end_line, and optionally anchor (e.g., "## Section").
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct DocumentRefInput {
-    /// Path to the document (relative to repo root).
-    pub document_path: String,
-    /// Description of what this reference points to (auto-embedded).
-    pub description: String,
-    /// Content type: "code:rust", "code:typescript", "markdown", "text", etc.
-    /// Use "code:<language>" for code files, otherwise it's treated as text.
-    #[serde(default)]
-    pub content_type: Option<String>,
-    /// Git commit SHA (defaults to HEAD).
-    #[serde(default)]
-    pub commit_sha: Option<String>,
-
-    // --- Code reference fields (required for code files) ---
-    /// LSP symbol name (e.g., "impl Foo::bar"). Required for code references.
-    #[serde(default)]
-    pub lsp_symbol: Option<String>,
-    /// LSP symbol kind (from LSP SymbolKind enum). Required for code references.
-    #[serde(default)]
-    pub lsp_kind: Option<i32>,
-    /// LSP range as JSON string. Required for code references.
-    #[serde(default)]
-    pub lsp_range: Option<String>,
-
-    // --- Text reference fields (required for text files) ---
-    /// Starting line number (1-indexed). Required for text references.
-    #[serde(default)]
-    pub start_line: Option<u32>,
-    /// Ending line number (1-indexed). Required for text references.
-    #[serde(default)]
-    pub end_line: Option<u32>,
-    /// Optional semantic anchor (e.g., "## Architecture", "### Overview").
-    #[serde(default)]
-    pub anchor: Option<String>,
-}
-
-/// Parameters for add_references tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AddReferencesParams {
-    /// Entity ID to add references to.
-    pub entity_id: String,
-    /// Document references to add.
-    pub refs: Vec<DocumentRefInput>,
-}
-
 /// Parameters for remove_references tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RemoveReferencesParams {
@@ -174,6 +228,12 @@ pub struct EntityResult {
     pub id: String,
     pub name: String,
     pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<String>,
     pub has_embedding: bool,
 }
 
@@ -183,8 +243,102 @@ impl From<Entity> for EntityResult {
             id: e.id,
             name: e.name,
             description: e.description,
+            scope: None,
+            categories: Vec::new(),
+            parents: Vec::new(),
             has_embedding: e.embedding.is_some(),
         }
+    }
+}
+
+impl From<crate::services::EntityInfo> for EntityResult {
+    fn from(e: crate::services::EntityInfo) -> Self {
+        Self {
+            id: e.id,
+            name: e.name,
+            description: e.description,
+            scope: Some(e.scope),
+            categories: e.categories,
+            parents: e.parents,
+            has_embedding: true,
+        }
+    }
+}
+
+// ============================================================================
+// Input Conversions
+// ============================================================================
+
+impl From<EntityCommandInput> for EntityCommand {
+    fn from(input: EntityCommandInput) -> Self {
+        match input {
+            EntityCommandInput::Attach { reference_id } => EntityCommand::Attach { reference_id },
+            EntityCommandInput::Unattach { reference_id } => {
+                EntityCommand::Unattach { reference_id }
+            }
+            EntityCommandInput::Add(r) => EntityCommand::Add(r.into()),
+            EntityCommandInput::Relate { entity_id, note } => {
+                EntityCommand::Relate { entity_id, note }
+            }
+            EntityCommandInput::Unrelate { entity_id } => EntityCommand::Unrelate { entity_id },
+            EntityCommandInput::Link {
+                entity_id,
+                link_type,
+            } => EntityCommand::Link {
+                entity_id,
+                link_type: parse_link_type(&link_type),
+            },
+            EntityCommandInput::Unlink {
+                entity_id,
+                link_type,
+            } => EntityCommand::Unlink {
+                entity_id,
+                link_type: parse_link_type(&link_type),
+            },
+        }
+    }
+}
+
+impl From<NewReferenceInput> for NewReference {
+    fn from(input: NewReferenceInput) -> Self {
+        match input {
+            NewReferenceInput::Code {
+                document_path,
+                lsp_symbol,
+                description,
+                start_line,
+                end_line,
+            } => NewReference::Code {
+                document_path,
+                lsp_symbol,
+                description,
+                start_line,
+                end_line,
+            },
+            NewReferenceInput::Text {
+                document_path,
+                description,
+                start_line,
+                end_line,
+                anchor,
+            } => NewReference::Text {
+                document_path,
+                description,
+                start_line,
+                end_line,
+                anchor,
+            },
+        }
+    }
+}
+
+fn parse_link_type(s: &str) -> crate::services::LinkType {
+    match s.to_lowercase().as_str() {
+        "calls" => crate::services::LinkType::Calls,
+        "imports" => crate::services::LinkType::Imports,
+        "implements" => crate::services::LinkType::Implements,
+        "instantiates" => crate::services::LinkType::Instantiates,
+        _ => crate::services::LinkType::Calls, // Default
     }
 }
 
@@ -192,6 +346,11 @@ impl From<Entity> for EntityResult {
 #[derive(Debug, Serialize)]
 pub struct CreateEntityResult {
     pub entity: EntityResult,
+    pub executed: Vec<crate::services::ExecutedCommand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed: Option<crate::services::FailedCommand>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<crate::services::EntityCommand>,
 }
 
 /// Response for update_entity tool.
@@ -199,6 +358,11 @@ pub struct CreateEntityResult {
 pub struct UpdateEntityResult {
     pub entity: EntityResult,
     pub embedding_updated: bool,
+    pub executed: Vec<crate::services::ExecutedCommand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed: Option<crate::services::FailedCommand>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<crate::services::EntityCommand>,
 }
 
 /// Response for delete_entity tool.
@@ -238,22 +402,6 @@ pub struct AddLinkResult {
     pub link_type: String,
 }
 
-/// Document reference result.
-#[derive(Debug, Serialize)]
-pub struct DocumentRefResult {
-    pub id: String,
-    pub document_path: String,
-    pub start_line: u32,
-    pub end_line: u32,
-}
-
-/// Response for add_references tool.
-#[derive(Debug, Serialize)]
-pub struct AddReferencesResult {
-    pub entity_id: String,
-    pub references: Vec<DocumentRefResult>,
-}
-
 /// Response for remove_references tool.
 #[derive(Debug, Serialize)]
 pub struct RemoveReferencesResult {
@@ -269,7 +417,8 @@ pub struct RemoveReferencesResult {
 impl McpServer {
     /// Create a new entity in the knowledge graph.
     ///
-    /// The description is automatically embedded for semantic search.
+    /// Requires category_ids (non-empty) and at least one Add command.
+    /// Non-Domain scope entities also require parent_ids.
     #[tool(description = "Create a new entity with auto-embedding of description.")]
     pub async fn create_entity(
         &self,
@@ -277,29 +426,26 @@ impl McpServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(name = %params.name, "Running create_entity tool");
 
-        let entity_repo = self.resolve::<EntityRepository>();
-        let embedder = self.resolve::<AppEmbedder>();
+        let entity_service = self.resolve::<EntityService>();
 
-        // Generate embedding for description
-        let embedding = embedder
-            .embed(&params.description)
-            .map_err(|e| McpError::internal_error(format!("Embedding error: {}", e), None))?;
-
-        let entity = Entity {
-            id: generate_ulid(),
+        let input = CreateEntityInput {
             name: params.name,
             description: params.description,
-            embedding: Some(embedding),
-            created_at: chrono::Utc::now(),
+            category_ids: params.category_ids,
+            parent_ids: params.parent_ids,
+            commands: params.commands.into_iter().map(|c| c.into()).collect(),
         };
 
-        let created = entity_repo
-            .create(&entity)
+        let output = entity_service
+            .create(input)
             .await
             .map_err(|e: AppError| McpError::from(e))?;
 
         let response = CreateEntityResult {
-            entity: created.into(),
+            entity: output.entity.into(),
+            executed: output.executed,
+            failed: output.failed,
+            skipped: output.skipped,
         };
 
         tracing::info!(id = %response.entity.id, "Created entity");
@@ -307,9 +453,10 @@ impl McpServer {
         Response(response).into()
     }
 
-    /// Update an entity's name and/or description.
+    /// Update an entity's name, description, categories, parents, or execute commands.
     ///
     /// If description changes, the embedding is regenerated.
+    /// Categories and parents use replace semantics when provided.
     #[tool(description = "Update an entity. Re-embeds if description changes.")]
     pub async fn update_entity(
         &self,
@@ -317,38 +464,33 @@ impl McpServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(id = %params.entity_id, "Running update_entity tool");
 
-        let entity_repo = self.resolve::<EntityRepository>();
-        let embedder = self.resolve::<AppEmbedder>();
+        let entity_service = self.resolve::<EntityService>();
 
-        // Generate new embedding if description is being updated
-        let new_embedding =
-            if let Some(ref desc) = params.description {
-                Some(embedder.embed(desc).map_err(|e| {
-                    McpError::internal_error(format!("Embedding error: {}", e), None)
-                })?)
-            } else {
-                None
-            };
+        let input = UpdateEntityInput {
+            entity_id: params.entity_id,
+            name: params.name,
+            description: params.description,
+            category_ids: params.category_ids,
+            parent_ids: params.parent_ids,
+            commands: params.commands.into_iter().map(|c| c.into()).collect(),
+        };
 
-        let updated = entity_repo
-            .update(
-                &params.entity_id,
-                params.name.as_deref(),
-                params.description.as_deref(),
-                new_embedding.as_deref(),
-            )
+        let output = entity_service
+            .update(input)
             .await
             .map_err(|e: AppError| McpError::from(e))?;
 
-        let embedding_updated = new_embedding.is_some();
         let response = UpdateEntityResult {
-            entity: updated.into(),
-            embedding_updated,
+            entity: output.entity.into(),
+            embedding_updated: output.embedding_updated,
+            executed: output.executed,
+            failed: output.failed,
+            skipped: output.skipped,
         };
 
         tracing::info!(
             id = %response.entity.id,
-            embedding_updated = embedding_updated,
+            embedding_updated = response.embedding_updated,
             "Updated entity"
         );
 
@@ -614,127 +756,6 @@ impl McpServer {
             to = %response.to_id,
             link_type = %response.link_type,
             "Added link"
-        );
-
-        Response(response).into()
-    }
-
-    /// Add document references to an entity.
-    ///
-    /// Descriptions are auto-embedded for semantic search.
-    /// For code files, provide lsp_symbol, lsp_kind, lsp_range.
-    /// For text files, provide start_line, end_line, and optionally anchor.
-    #[tool(description = "Add document references to an entity with auto-embedding.")]
-    pub async fn add_references(
-        &self,
-        Parameters(params): Parameters<AddReferencesParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::info!(
-            entity_id = %params.entity_id,
-            count = params.refs.len(),
-            "Running add_references tool"
-        );
-
-        let doc_repo = self.resolve::<DocumentRepository>();
-        let embedder = self.resolve::<AppEmbedder>();
-
-        let mut created_refs = Vec::new();
-
-        for ref_input in params.refs {
-            // Generate embedding for description
-            let embedding = embedder
-                .embed(&ref_input.description)
-                .map_err(|e| McpError::internal_error(format!("Embedding error: {}", e), None))?;
-
-            let commit_sha = ref_input.commit_sha.as_deref().unwrap_or("HEAD");
-
-            // Determine if this is a code or text reference based on content_type
-            let is_code = ref_input
-                .content_type
-                .as_ref()
-                .map(|ct| ct.starts_with("code:"))
-                .unwrap_or(false);
-
-            let (ref_id, ref_path) = if is_code {
-                // Code reference - requires LSP fields
-                let lsp_symbol = ref_input.lsp_symbol.as_deref().ok_or_else(|| {
-                    McpError::invalid_params("lsp_symbol is required for code references", None)
-                })?;
-                let lsp_kind = ref_input.lsp_kind.ok_or_else(|| {
-                    McpError::invalid_params("lsp_kind is required for code references", None)
-                })?;
-                let lsp_range = ref_input.lsp_range.as_deref().ok_or_else(|| {
-                    McpError::invalid_params("lsp_range is required for code references", None)
-                })?;
-
-                let language = ref_input
-                    .content_type
-                    .as_ref()
-                    .and_then(|ct| ct.strip_prefix("code:"))
-                    .unwrap_or("unknown");
-
-                let code_ref = doc_repo
-                    .create_code_reference(CreateCodeReferenceParams {
-                        entity_id: &params.entity_id,
-                        path: &ref_input.document_path,
-                        language,
-                        commit_sha,
-                        description: &ref_input.description,
-                        embedding: Some(&embedding),
-                        lsp_symbol,
-                        lsp_kind,
-                        lsp_range,
-                    })
-                    .await
-                    .map_err(|e: AppError| McpError::from(e))?;
-
-                (code_ref.id, code_ref.path)
-            } else {
-                // Text reference - requires line numbers
-                let start_line = ref_input.start_line.ok_or_else(|| {
-                    McpError::invalid_params("start_line is required for text references", None)
-                })?;
-                let end_line = ref_input.end_line.ok_or_else(|| {
-                    McpError::invalid_params("end_line is required for text references", None)
-                })?;
-
-                let content_type = ref_input.content_type.as_deref().unwrap_or("markdown");
-
-                let text_ref = doc_repo
-                    .create_text_reference(CreateTextReferenceParams {
-                        entity_id: &params.entity_id,
-                        path: &ref_input.document_path,
-                        content_type,
-                        commit_sha,
-                        description: &ref_input.description,
-                        embedding: Some(&embedding),
-                        start_line,
-                        end_line,
-                        anchor: ref_input.anchor.as_deref(),
-                    })
-                    .await
-                    .map_err(|e: AppError| McpError::from(e))?;
-
-                (text_ref.id, text_ref.path)
-            };
-
-            created_refs.push(DocumentRefResult {
-                id: ref_id,
-                document_path: ref_path,
-                start_line: ref_input.start_line.unwrap_or(0),
-                end_line: ref_input.end_line.unwrap_or(0),
-            });
-        }
-
-        let response = AddReferencesResult {
-            entity_id: params.entity_id,
-            references: created_refs,
-        };
-
-        tracing::info!(
-            entity_id = %response.entity_id,
-            count = response.references.len(),
-            "Added references"
         );
 
         Response(response).into()
