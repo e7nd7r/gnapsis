@@ -33,6 +33,9 @@ pub enum AppError {
     #[error("Entity has children and cannot be deleted: {0}")]
     HasChildren(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     // Git errors
     #[error("Git error: {0}")]
     Git(#[from] git2::Error),
@@ -46,6 +49,13 @@ pub enum AppError {
     // Embedding errors
     #[error("Embedding generation failed: {0}")]
     Embedding(String),
+
+    // LSP errors
+    #[error("LSP unavailable: {0}")]
+    LspUnavailable(String),
+
+    #[error("Symbol '{symbol}' not found in '{path}'")]
+    SymbolNotFound { symbol: String, path: String },
 
     // Config errors
     #[error("Configuration error: {0}")]
@@ -63,6 +73,7 @@ impl From<AppError> for rmcp::model::ErrorData {
             AppError::ScopeNotFound(_) => (ErrorCode::RESOURCE_NOT_FOUND, "SCOPE_NOT_FOUND"),
             AppError::InvalidBelongsTo { .. } => (ErrorCode::INVALID_PARAMS, "INVALID_BELONGS_TO"),
             AppError::HasChildren(_) => (ErrorCode::INVALID_PARAMS, "HAS_CHILDREN"),
+            AppError::Validation(_) => (ErrorCode::INVALID_PARAMS, "VALIDATION_ERROR"),
             AppError::NotInitialized => (ErrorCode::INVALID_REQUEST, "NOT_INITIALIZED"),
             AppError::Config(_) => (ErrorCode::INTERNAL_ERROR, "CONFIG_ERROR"),
             AppError::Connection(_) => (ErrorCode::INTERNAL_ERROR, "CONNECTION_ERROR"),
@@ -71,6 +82,8 @@ impl From<AppError> for rmcp::model::ErrorData {
             AppError::GitMessage { .. } => (ErrorCode::INTERNAL_ERROR, "GIT_ERROR"),
             AppError::RepoNotFound(_) => (ErrorCode::RESOURCE_NOT_FOUND, "REPO_NOT_FOUND"),
             AppError::Embedding(_) => (ErrorCode::INTERNAL_ERROR, "EMBEDDING_ERROR"),
+            AppError::LspUnavailable(_) => (ErrorCode::INTERNAL_ERROR, "LSP_UNAVAILABLE"),
+            AppError::SymbolNotFound { .. } => (ErrorCode::INVALID_PARAMS, "SYMBOL_NOT_FOUND"),
         };
 
         rmcp::model::ErrorData::new(code, format!("[{}] {}", app_code, err), None)

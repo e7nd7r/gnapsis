@@ -103,7 +103,6 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **add_belongs** - Add composition (child BELONGS_TO parents)
 - **add_related** - Add RELATED_TO relationships
 - **add_link** - Add code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
-- **add_references** - Add document references with auto-embedding
 - **remove_references** - Remove document references
 
 ## Query Tools

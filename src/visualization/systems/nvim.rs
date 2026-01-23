@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use crate::models::SubgraphNode;
 use crate::visualization::graph::NodeType;
 use crate::visualization::nvim::DocRefInfo;
+use crate::visualization::nvim::NvimVisualization;
 use crate::visualization::resources::{
     CurrentSelection, GraphLayoutRes, NvimClientRes, Selection, SubgraphDataRes,
 };
