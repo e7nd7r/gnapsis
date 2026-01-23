@@ -770,8 +770,14 @@ fn parse_lsp_range(lsp_range: &str) -> (u32, u32) {
     // Try simple format first: "startLine:startChar-endLine:endChar"
     if let Some((start_part, end_part)) = lsp_range.split_once('-') {
         if let (Some(start_line), Some(end_line)) = (
-            start_part.split(':').next().and_then(|s| s.parse::<u32>().ok()),
-            end_part.split(':').next().and_then(|s| s.parse::<u32>().ok()),
+            start_part
+                .split(':')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok()),
+            end_part
+                .split(':')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok()),
         ) {
             // Already 1-indexed in simple format
             return (start_line, end_line);

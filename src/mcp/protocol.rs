@@ -114,4 +114,3 @@ impl<T: Serialize> From<PaginatedResponse<T>> for Result<CallToolResult, rmcp::m
         .unwrap()]))
     }
 }
-
