@@ -19,6 +19,7 @@ use crate::mcp::server::McpServer;
 use crate::mcp::tools::validation::lsp_kind_to_suggestions;
 use crate::models::Reference;
 use crate::repositories::DocumentRepository;
+use crate::services::LspService;
 
 // ============================================================================
 // Parameter Types
@@ -253,13 +254,32 @@ impl McpServer {
             Vec::new()
         };
 
-        // Find untracked symbols if LSP symbols provided
+        // Find untracked symbols - use provided symbols or query LSP
         let untracked = if params.include_untracked.unwrap_or(true) {
-            if let Some(lsp_symbols) = &params.lsp_symbols {
-                find_untracked_symbols(lsp_symbols, &references)
+            let lsp_symbols = if let Some(symbols) = &params.lsp_symbols {
+                // Use provided symbols
+                symbols.clone()
             } else {
-                Vec::new()
-            }
+                // Try to get symbols from LSP service
+                let lsp_service = self.resolve::<LspService>();
+                match lsp_service.get_flat_symbols(&params.document_path) {
+                    Ok(symbols) => symbols
+                        .into_iter()
+                        .map(|s| LspSymbolInput {
+                            name: s.name,
+                            kind: s.kind,
+                            start_line: s.start_line,
+                            end_line: s.end_line,
+                            container_name: s.container,
+                        })
+                        .collect(),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "Could not get LSP symbols, skipping untracked detection");
+                        Vec::new()
+                    }
+                }
+            };
+            find_untracked_symbols(&lsp_symbols, &references)
         } else {
             Vec::new()
         };

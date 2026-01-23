@@ -77,62 +77,67 @@ impl ServerHandler for McpServer {
 
 A knowledge graph for understanding codebases through semantic relationships.
 
-## Getting Started
+## Quick Start
 
-1. **init_project** - Initialize the database schema (run once)
-2. **project_overview** - Get full project context: taxonomy, entity hierarchy, and stats
+1. **init_project** - Initialize schema (run once)
+2. **project_overview** - Get current ontology state
+3. **analyze_document** - Discover symbols in a file
+4. **create_entity** - Add entities with code references
 
-## Concepts
+## Key Workflows
 
-- **Entities**: Named concepts in your codebase (modules, structs, functions)
-- **Categories**: Classification values at each scope level
-- **Scopes**: Hierarchy levels (Domain → Feature → Namespace → Component → Unit)
-- **DocumentReferences**: Pointers to code locations with embeddings
+### Building the Ontology
+```
+analyze_document(path) → see untracked LSP symbols
+create_entity(name, description, category_ids, parent_ids, commands=[Add...])
+```
 
-## Project Tools
+For code files, use `ref_type: "code"` with `lsp_symbol` (e.g., "McpServer", "impl Foo::bar").
+For docs/markdown, use `ref_type: "text"` with `start_line`, `end_line`, optional `anchor`.
 
-- **init_project** - Initialize database schema and seed data
-- **project_overview** - Get full context (categories, domains, features, namespaces, stats). Optionally generates a skill file.
+### Querying Knowledge
+```
+search(query) → find entities/references by meaning
+query(entity_id) → extract relevant subgraph with context budget
+get_entity(id) → full entity details with references
+```
 
-## Taxonomy Tools
+### Maintenance
+```
+get_changed_files() → find modified files
+analyze_document(path) → check staleness (is_stale: true)
+alter_references([Update...]) → fix line numbers (auto-updates commit SHA)
+validate_graph() → check integrity (orphans, cycles, missing refs)
+```
 
-- **create_category** - Create new category at a scope
+## Scopes (hierarchy)
 
-## Entity Tools
+Domain → Feature → Namespace → Component → Unit
 
-- **create_entity** - Create entity with commands (Add, Relate, Link, etc.)
-- **update_entity** - Update entity with commands (re-embeds on description change)
-- **delete_entity** - Delete entity (must have no children)
+- **Domain**: Business domains (e.g., "Authentication")
+- **Feature**: Capabilities (e.g., "JWT Validation")
+- **Namespace**: Code modules (e.g., "services", "mcp::tools")
+- **Component**: Structs, classes, traits
+- **Unit**: Functions, methods, constants
 
-Note: Classification is done via `category_ids` on create/update. Relationships are added via commands:
-- `Relate` command for RELATED_TO (note is embedded for semantic search)
-- `Link` command for code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
-- `parent_ids` parameter for BELONGS_TO composition
+## Entity Commands
 
-## Reference Tools
+Use in create_entity/update_entity `commands` array:
+- `Add` - Create and attach a new reference
+- `Attach` - Attach existing reference by ID
+- `Relate` - Create RELATED_TO with optional note
+- `Link` - Code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
 
-- **alter_references** - Bulk update/delete references (auto-updates commit SHA to HEAD)
+## Tools Reference
 
-## Query Tools
-
-- **get_entity** - Get entity with full context (classifications, references, hierarchy)
-- **find_entities** - Find entities by scope, category, or parent
-- **get_document_entities** - Get all entities in a document
-- **search** - Unified semantic search across entities and/or references. Use `target` param: "entities", "references", or "all"
-- **query** - Semantic subgraph extraction with Best-First Search. Budget-aware (max_tokens, max_nodes). Scoring strategies: "global" or "branch_penalty"
-
-## Sync Tools
-
-- **get_changed_files** - Get list of files changed between commits
-
-## Analysis Tools
-
-- **analyze_document** - Unified document analysis: tracked refs with staleness, untracked symbols, git diffs
-
-## Validation & LSP Tools
-
-- **validate_graph** - Check graph integrity (orphans, cycles, scope violations, unclassified, no references)
-- **lsp_refresh** - Refresh document references using LSP symbol locations
+**Project**: init_project, project_overview
+**Taxonomy**: create_category
+**Entity**: create_entity, update_entity, delete_entity
+**Reference**: alter_references
+**Query**: get_entity, find_entities, get_document_entities, search, query
+**Sync**: get_changed_files
+**Analysis**: analyze_document
+**Validation**: validate_graph, lsp_refresh
 "#
                 .to_string(),
             ),
