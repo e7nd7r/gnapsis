@@ -3,6 +3,7 @@
 pub mod entity;
 pub mod project;
 pub mod query;
+pub mod reference;
 pub mod sync;
 pub mod taxonomy;
 pub mod validation;

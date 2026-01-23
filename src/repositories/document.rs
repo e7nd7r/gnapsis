@@ -483,6 +483,46 @@ impl DocumentRepository {
         Ok(references)
     }
 
+    /// Get all entities attached to a reference.
+    ///
+    /// Returns a list of (entity_id, entity_name) tuples for all entities
+    /// that have HAS_REFERENCE relationship to this reference.
+    pub async fn get_attached_entities(
+        &self,
+        reference_id: &str,
+    ) -> Result<Vec<(String, String)>, AppError> {
+        let mut entities = Vec::new();
+
+        // Query entities attached to either CodeReference or TextReference
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "OPTIONAL MATCH (e:Entity)-[:HAS_REFERENCE]->(code:CodeReference {id: $id})
+                     OPTIONAL MATCH (e2:Entity)-[:HAS_REFERENCE]->(text:TextReference {id: $id})
+                     WITH coalesce(e, e2) AS entity
+                     WHERE entity IS NOT NULL
+                     RETURN entity.id AS id, entity.name AS name",
+                )
+                .param("id", reference_id),
+            )
+            .await?;
+
+        while let Some(row) = result.next().await? {
+            let id: String = row.get("id").map_err(|e| AppError::Query {
+                message: e.to_string(),
+                query: "get_attached_entities".to_string(),
+            })?;
+            let name: String = row.get("name").map_err(|e| AppError::Query {
+                message: e.to_string(),
+                query: "get_attached_entities".to_string(),
+            })?;
+            entities.push((id, name));
+        }
+
+        Ok(entities)
+    }
+
     /// Get stale references (references with old commit SHA).
     pub async fn get_stale_references(
         &self,

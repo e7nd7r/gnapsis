@@ -13,7 +13,7 @@ use crate::error::AppError;
 use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
 use crate::models::Entity;
-use crate::repositories::{CategoryRepository, DocumentRepository, EntityRepository};
+use crate::repositories::{CategoryRepository, EntityRepository};
 use crate::services::{
     CreateEntityInput, EntityCommand, EntityService, NewReference, UpdateEntityInput,
 };
@@ -211,13 +211,6 @@ pub struct AddLinkParams {
     pub link_type: String,
 }
 
-/// Parameters for remove_references tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct RemoveReferencesParams {
-    /// Reference IDs to remove.
-    pub reference_ids: Vec<String>,
-}
-
 // ============================================================================
 // Response Types
 // ============================================================================
@@ -400,13 +393,6 @@ pub struct AddLinkResult {
     pub from_id: String,
     pub to_id: String,
     pub link_type: String,
-}
-
-/// Response for remove_references tool.
-#[derive(Debug, Serialize)]
-pub struct RemoveReferencesResult {
-    pub removed_count: usize,
-    pub reference_ids: Vec<String>,
 }
 
 // ============================================================================
@@ -757,36 +743,6 @@ impl McpServer {
             link_type = %response.link_type,
             "Added link"
         );
-
-        Response(response).into()
-    }
-
-    /// Remove document references.
-    #[tool(description = "Remove document references by ID.")]
-    pub async fn remove_references(
-        &self,
-        Parameters(params): Parameters<RemoveReferencesParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::info!(
-            count = params.reference_ids.len(),
-            "Running remove_references tool"
-        );
-
-        let doc_repo = self.resolve::<DocumentRepository>();
-
-        for ref_id in &params.reference_ids {
-            doc_repo
-                .delete_reference(ref_id)
-                .await
-                .map_err(|e: AppError| McpError::from(e))?;
-        }
-
-        let response = RemoveReferencesResult {
-            removed_count: params.reference_ids.len(),
-            reference_ids: params.reference_ids,
-        };
-
-        tracing::info!(count = response.removed_count, "Removed references");
 
         Response(response).into()
     }

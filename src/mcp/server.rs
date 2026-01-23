@@ -41,6 +41,7 @@ impl McpServer {
             + Self::taxonomy_tools()
             + Self::entity_tools()
             + Self::query_tools()
+            + Self::reference_tools()
             + Self::sync_tools()
             + Self::validation_tools()
     }
@@ -95,15 +96,18 @@ A knowledge graph for understanding codebases through semantic relationships.
 
 ## Entity Tools
 
-- **create_entity** - Create entity with auto-embedding
-- **update_entity** - Update entity (re-embeds on description change)
+- **create_entity** - Create entity with commands (Add, Relate, Link, etc.)
+- **update_entity** - Update entity with commands (re-embeds on description change)
 - **delete_entity** - Delete entity (must have no children)
 - **classify** - Classify entity with categories
 - **unclassify** - Remove classifications from entity
 - **add_belongs** - Add composition (child BELONGS_TO parents)
 - **add_related** - Add RELATED_TO relationships
 - **add_link** - Add code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
-- **remove_references** - Remove document references
+
+## Reference Tools
+
+- **alter_references** - Bulk update/delete references (auto-updates commit SHA to HEAD)
 
 ## Query Tools
 
@@ -118,9 +122,6 @@ A knowledge graph for understanding codebases through semantic relationships.
 ## Sync Tools
 
 - **get_changed_files** - Get list of files changed between commits
-- **get_document_references** - Get all document references for a file
-- **validate_documents** - Find stale references with diff context
-- **sync_references** - Update line numbers for document references
 
 ## Validation & LSP Tools
 
