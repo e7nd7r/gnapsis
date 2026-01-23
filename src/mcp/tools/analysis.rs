@@ -382,9 +382,9 @@ fn get_diff_hunks(
     // Find the oldest commit SHA among all references
     let oldest_commit = references
         .iter()
-        .filter_map(|r| match r {
-            Reference::Code(c) => Some(c.commit_sha.as_str()),
-            Reference::Text(t) => Some(t.commit_sha.as_str()),
+        .map(|r| match r {
+            Reference::Code(c) => c.commit_sha.as_str(),
+            Reference::Text(t) => t.commit_sha.as_str(),
         })
         .next();
 

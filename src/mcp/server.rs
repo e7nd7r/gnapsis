@@ -100,11 +100,11 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **create_entity** - Create entity with commands (Add, Relate, Link, etc.)
 - **update_entity** - Update entity with commands (re-embeds on description change)
 - **delete_entity** - Delete entity (must have no children)
-- **classify** - Classify entity with categories
-- **unclassify** - Remove classifications from entity
-- **add_belongs** - Add composition (child BELONGS_TO parents)
-- **add_related** - Add RELATED_TO relationships
-- **add_link** - Add code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
+
+Note: Classification is done via `category_ids` on create/update. Relationships are added via commands:
+- `Relate` command for RELATED_TO (note is embedded for semantic search)
+- `Link` command for code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
+- `parent_ids` parameter for BELONGS_TO composition
 
 ## Reference Tools
 
