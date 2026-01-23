@@ -80,7 +80,7 @@ A knowledge graph for understanding codebases through semantic relationships.
 ## Getting Started
 
 1. **init_project** - Initialize the database schema (run once)
-2. **get_project_stats** - View entity counts and schema version
+2. **project_overview** - Get full project context: taxonomy, entity hierarchy, and stats
 
 ## Concepts
 
@@ -89,10 +89,13 @@ A knowledge graph for understanding codebases through semantic relationships.
 - **Scopes**: Hierarchy levels (Domain → Feature → Namespace → Component → Unit)
 - **DocumentReferences**: Pointers to code locations with embeddings
 
+## Project Tools
+
+- **init_project** - Initialize database schema and seed data
+- **project_overview** - Get full context (categories, domains, features, namespaces, stats). Optionally generates a skill file.
+
 ## Taxonomy Tools
 
-- **list_scopes** - List scope hierarchy (Domain, Feature, Namespace, Component, Unit)
-- **list_categories** - List categories by scope
 - **create_category** - Create new category at a scope
 
 ## Entity Tools
