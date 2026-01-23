@@ -10,7 +10,7 @@ pub use category::Category;
 pub use document::{CodeReference, Document, Reference, TextReference};
 pub use entity::{generate_ulid, Entity};
 pub use graph::{
-    CategoryClassification, CompositionGraph, CompositionNode, EntityWithContext,
-    EntityWithReference, SearchResult, Subgraph, SubgraphEdge, SubgraphNode,
+    CategoryClassification, EntityWithContext, EntityWithReference, QueryEntitySummary, QueryGraph,
+    QueryGraphEdge, QueryGraphNode, QueryGraphStats, SearchResult,
 };
 pub use scope::Scope;

@@ -1,7 +1,7 @@
 //! 3D Graph Visualization Module
 //!
 //! Provides force-directed layout and 3D rendering using Bevy.
-//! Works directly with `Subgraph` and `CompositionGraph` models.
+//! Visualizes QueryGraph results from semantic queries.
 //!
 //! ## Module Structure
 //!
@@ -27,35 +27,21 @@ pub use graph::{GraphLayout, LayoutNode, NodeType};
 pub use nvim::NvimClient;
 pub use plugin::VisualizationPlugin;
 
-use crate::models::{CompositionGraph, Subgraph};
+use crate::models::QueryGraph;
 use bevy::prelude::*;
+use resources::CameraOrbit;
 
-/// Input mode for visualization.
-pub enum VisualizationInput {
-    /// Visualize a subgraph centered on a starting entity.
-    Subgraph { data: Subgraph, start_id: String },
-    /// Visualize a composition graph (ancestors/descendants).
-    Composition(CompositionGraph),
-}
-
-/// Run the visualizer with the given graph data.
+/// Run the visualizer with a QueryGraph.
 ///
 /// This spawns a Bevy window with the 3D graph visualization.
 /// The function blocks until the window is closed.
-pub fn run_visualizer(input: VisualizationInput) {
-    // Extract subgraph data and create layout
-    let (layout, subgraph_data) = match &input {
-        VisualizationInput::Subgraph { data, start_id } => {
-            let mut layout = GraphLayout::from_subgraph(data, start_id);
-            layout.stabilize(500); // Pre-settle before rendering
-            (layout, Some(data.clone()))
-        }
-        VisualizationInput::Composition(data) => {
-            let mut layout = GraphLayout::from_composition(data);
-            layout.stabilize(500); // Pre-settle before rendering
-            (layout, None)
-        }
-    };
+pub fn run_visualizer(graph: QueryGraph) {
+    let mut layout = GraphLayout::from_query_graph(&graph);
+    layout.stabilize(500); // Pre-settle before rendering
+
+    // Calculate camera distance based on graph bounds
+    let (center, radius) = layout.bounding_sphere();
+    let camera_distance = (radius * 2.5).max(10.0); // Ensure minimum distance
 
     // Try to connect to Neovim
     let nvim_client = NvimClient::try_connect();
@@ -73,6 +59,11 @@ pub fn run_visualizer(input: VisualizationInput) {
             ..default()
         }))
         .insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.12)))
-        .add_plugins(VisualizationPlugin::new(layout, subgraph_data, nvim_client))
+        .insert_resource(CameraOrbit {
+            target: center,
+            distance: camera_distance,
+            ..default()
+        })
+        .add_plugins(VisualizationPlugin::new(layout, graph, nvim_client))
         .run();
 }

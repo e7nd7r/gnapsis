@@ -9,7 +9,6 @@ use std::sync::Mutex;
 
 use super::graph::GraphLayout;
 use super::nvim::NvimClient;
-use crate::models::Subgraph;
 
 // =============================================================================
 // Camera State
@@ -83,13 +82,6 @@ pub struct CurrentSelection {
 /// The graph layout containing node positions and physics state.
 #[derive(Resource)]
 pub struct GraphLayoutRes(pub GraphLayout);
-
-/// Original subgraph data for DocumentReference lookups.
-///
-/// Used to retrieve file paths and line numbers when a
-/// DocumentReference node is selected.
-#[derive(Resource, Default)]
-pub struct SubgraphDataRes(pub Option<Subgraph>);
 
 // =============================================================================
 // External Integrations

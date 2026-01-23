@@ -63,6 +63,10 @@ pub enum AppError {
 
     #[error("Project not initialized. Run init_project first.")]
     NotInitialized,
+
+    // Internal errors
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 impl From<AppError> for rmcp::model::ErrorData {
@@ -84,6 +88,7 @@ impl From<AppError> for rmcp::model::ErrorData {
             AppError::Embedding(_) => (ErrorCode::INTERNAL_ERROR, "EMBEDDING_ERROR"),
             AppError::LspUnavailable(_) => (ErrorCode::INTERNAL_ERROR, "LSP_UNAVAILABLE"),
             AppError::SymbolNotFound { .. } => (ErrorCode::INVALID_PARAMS, "SYMBOL_NOT_FOUND"),
+            AppError::Internal(_) => (ErrorCode::INTERNAL_ERROR, "INTERNAL_ERROR"),
         };
 
         rmcp::model::ErrorData::new(code, format!("[{}] {}", app_code, err), None)

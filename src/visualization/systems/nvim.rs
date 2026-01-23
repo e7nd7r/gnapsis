@@ -2,23 +2,21 @@
 
 use bevy::prelude::*;
 
-use crate::models::SubgraphNode;
+use crate::models::QueryGraphNode;
 use crate::visualization::graph::NodeType;
 use crate::visualization::nvim::DocRefInfo;
 use crate::visualization::nvim::NvimVisualization;
-use crate::visualization::resources::{
-    CurrentSelection, GraphLayoutRes, NvimClientRes, Selection, SubgraphDataRes,
-};
+use crate::visualization::resources::{CurrentSelection, GraphLayoutRes, NvimClientRes, Selection};
 
 /// Show document references in Neovim picker when a node is selected.
 ///
-/// - If a DocumentReference is selected: shows that reference in the picker
-/// - If an Entity is selected: shows all connected DocumentReferences in the picker
+/// - If a Reference is selected: opens that file location directly
+/// - If an Entity is selected: shows all connected References in the picker
 pub fn nvim_integration_system(
     selection: Res<CurrentSelection>,
     layout: Res<GraphLayoutRes>,
-    subgraph_data: Res<SubgraphDataRes>,
     nvim_client: Res<NvimClientRes>,
+    query_graph: Option<Res<QueryGraphRes>>,
 ) {
     // Only act when selection changes
     if !selection.is_changed() {
@@ -36,18 +34,18 @@ pub fn nvim_integration_system(
         None => return,
     };
 
-    // Get the subgraph data
-    let subgraph = match &subgraph_data.0 {
-        Some(sg) => sg,
+    // Get the query graph data (needed for reference lookups)
+    let graph = match &query_graph {
+        Some(g) => &g.0,
         None => return,
     };
 
     // Collect document references based on selection type
     let (refs, title): (Vec<DocRefInfo>, String) = match layout_node.node_type {
         NodeType::DocumentReference => {
-            // Selected a DocumentReference directly - show just this one
-            let doc_ref = subgraph.nodes.iter().find_map(|node| match node {
-                SubgraphNode::DocumentReference {
+            // Selected a Reference directly - find it in the graph
+            let doc_ref = graph.nodes.iter().find_map(|node| match node {
+                QueryGraphNode::Reference {
                     id,
                     document_path,
                     start_line,
@@ -70,8 +68,8 @@ pub fn nvim_integration_system(
         }
 
         NodeType::Entity | NodeType::StartNode => {
-            // Selected an Entity - find all connected DocumentReferences
-            let connected_doc_ref_ids: Vec<&str> = layout
+            // Selected an Entity - find all connected References
+            let connected_ref_ids: Vec<&str> = layout
                 .0
                 .edges
                 .iter()
@@ -95,23 +93,23 @@ pub fn nvim_integration_system(
                 })
                 .collect();
 
-            if connected_doc_ref_ids.is_empty() {
+            if connected_ref_ids.is_empty() {
                 return;
             }
 
-            // Get full info for each DocumentReference
-            let refs: Vec<DocRefInfo> = subgraph
+            // Get full info for each Reference
+            let refs: Vec<DocRefInfo> = graph
                 .nodes
                 .iter()
                 .filter_map(|node| match node {
-                    SubgraphNode::DocumentReference {
+                    QueryGraphNode::Reference {
                         id,
                         document_path,
                         start_line,
                         end_line,
                         description,
                         ..
-                    } if connected_doc_ref_ids.contains(&id.as_str()) => Some(DocRefInfo {
+                    } if connected_ref_ids.contains(&id.as_str()) => Some(DocRefInfo {
                         path: document_path.clone(),
                         start_line: *start_line,
                         end_line: *end_line,
@@ -142,3 +140,9 @@ pub fn nvim_integration_system(
         }
     }
 }
+
+use crate::models::QueryGraph;
+
+/// Resource to hold the QueryGraph data for reference lookups.
+#[derive(Resource)]
+pub struct QueryGraphRes(pub QueryGraph);

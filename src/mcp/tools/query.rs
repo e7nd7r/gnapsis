@@ -1,6 +1,7 @@
 //! Query and search tools for the knowledge graph.
 //!
-//! These tools provide thin MCP handlers that delegate to GraphService.
+//! Provides unified search across entities and references, plus semantic
+//! subgraph extraction with Best-First Search.
 
 use std::process::Command;
 
@@ -10,14 +11,18 @@ use rmcp::{
     schemars::{self, JsonSchema},
     tool, tool_router, ErrorData as McpError,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::mcp::protocol::Response;
 use crate::mcp::server::McpServer;
-use crate::services::GraphService;
+use crate::models::QueryGraph;
+use crate::services::{
+    GraphService, ScoringStrategy as ServiceScoringStrategy, SearchTarget as ServiceSearchTarget,
+    SemanticQueryParams,
+};
 
 /// Spawn the visualizer process with the given JSON data.
-fn spawn_visualizer<T: Serialize>(data: &T) -> Result<(), McpError> {
+fn spawn_visualizer(data: &QueryGraph) -> Result<(), McpError> {
     // Write to temp file
     let temp_file = tempfile::NamedTempFile::with_suffix(".json").map_err(|e| {
         McpError::internal_error(format!("Failed to create temp file: {}", e), None)
@@ -53,7 +58,7 @@ fn spawn_visualizer<T: Serialize>(data: &T) -> Result<(), McpError> {
 }
 
 // ============================================================================
-// Parameter Types
+// Parameter Types (with JsonSchema for MCP)
 // ============================================================================
 
 /// Parameters for get_entity tool.
@@ -87,68 +92,95 @@ pub struct GetDocumentEntitiesParams {
     pub document_path: String,
 }
 
-/// Parameters for get_composition_graph tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetCompositionGraphParams {
-    /// Entity ID to get composition for.
-    pub entity_id: String,
-    /// Direction: "ancestors", "descendants", or "both" (default: "both").
-    #[serde(default)]
-    pub direction: Option<String>,
-    /// Maximum depth to traverse (default: unlimited).
-    #[serde(default)]
-    pub max_depth: Option<u32>,
-    /// Open 3D visualization window (spawns separate process).
-    #[serde(default)]
-    pub visualize: Option<bool>,
+/// What to search: entities, references, or both.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchTarget {
+    /// Search only entities.
+    Entities,
+    /// Search only document references.
+    References,
+    /// Search both entities and references.
+    #[default]
+    All,
 }
 
-/// Parameters for query_subgraph tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct QuerySubgraphParams {
-    /// Starting entity ID.
-    pub entity_id: String,
-    /// Maximum number of hops (1-5, default: 2).
-    #[serde(default)]
-    pub hops: Option<u32>,
-    /// Filter by relationship types (e.g., ["BELONGS_TO", "CALLS"]).
-    #[serde(default)]
-    pub relationship_types: Option<Vec<String>>,
-    /// Optional semantic query to filter results.
-    #[serde(default)]
-    pub semantic_query: Option<String>,
-    /// Open 3D visualization window (spawns separate process).
-    #[serde(default)]
-    pub visualize: Option<bool>,
+impl From<SearchTarget> for ServiceSearchTarget {
+    fn from(target: SearchTarget) -> Self {
+        match target {
+            SearchTarget::Entities => ServiceSearchTarget::Entities,
+            SearchTarget::References => ServiceSearchTarget::References,
+            SearchTarget::All => ServiceSearchTarget::All,
+        }
+    }
 }
 
-/// Parameters for search_documents tool.
+/// Parameters for unified search tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SearchDocumentsParams {
+pub struct SearchParams {
     /// Natural language search query.
     pub query: String,
-    /// Maximum number of results (default: 10).
+    /// What to search: "entities", "references", or "all" (default).
+    #[serde(default)]
+    pub target: Option<SearchTarget>,
+    /// Maximum results (default: 20).
     #[serde(default)]
     pub limit: Option<u32>,
-    /// Minimum similarity score (0.0 to 1.0, default: 0.5).
+    /// Minimum similarity score (0.0 to 1.0, default: 0.3).
     #[serde(default)]
     pub min_score: Option<f32>,
-}
-
-/// Parameters for semantic_search tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SemanticSearchParams {
-    /// Natural language search query.
-    pub query: String,
-    /// Maximum number of results (default: 10).
-    #[serde(default)]
-    pub limit: Option<u32>,
-    /// Minimum similarity score (0.0 to 1.0, default: 0.5).
-    #[serde(default)]
-    pub min_score: Option<f32>,
-    /// Filter by scope name.
+    /// Filter by scope (entities only).
     #[serde(default)]
     pub scope: Option<String>,
+}
+
+/// Scoring strategy for semantic subgraph extraction.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ScoringStrategy {
+    /// Only global token accumulation affects scoring (simpler, may go deep).
+    #[default]
+    Global,
+    /// Also penalize deep branches to encourage breadth.
+    BranchPenalty,
+}
+
+impl From<ScoringStrategy> for ServiceScoringStrategy {
+    fn from(strategy: ScoringStrategy) -> Self {
+        match strategy {
+            ScoringStrategy::Global => ServiceScoringStrategy::Global,
+            ScoringStrategy::BranchPenalty => ServiceScoringStrategy::BranchPenalty,
+        }
+    }
+}
+
+/// Parameters for semantic subgraph query tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct QueryParams {
+    /// Starting entity (optional - if omitted, searches for best match).
+    #[serde(default)]
+    pub entity_id: Option<String>,
+    /// Semantic query for relevance scoring (uses entity.description if omitted).
+    #[serde(default)]
+    pub semantic_query: Option<String>,
+    /// Maximum nodes in result (default: 50).
+    #[serde(default)]
+    pub max_nodes: Option<u32>,
+    /// Maximum estimated tokens (default: 4000).
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Minimum relevance to include node (default: 0.3).
+    #[serde(default)]
+    pub min_relevance: Option<f32>,
+    /// Scoring strategy: "global" or "branch_penalty" (default: "global").
+    #[serde(default)]
+    pub scoring_strategy: Option<ScoringStrategy>,
+    /// Filter relationship types (e.g., ["BELONGS_TO", "CALLS"]).
+    #[serde(default)]
+    pub relationship_types: Option<Vec<String>>,
+    /// Open 3D visualization window (spawns separate process).
+    #[serde(default)]
+    pub visualize: Option<bool>,
 }
 
 // ============================================================================
@@ -213,125 +245,91 @@ impl McpServer {
         Response(entities).into()
     }
 
-    /// Get composition graph (ancestors and descendants via BELONGS_TO).
+    /// Unified semantic search across entities and references.
     #[tool(
-        description = "Get entity's composition subgraph (ancestors, descendants) via BELONGS_TO."
+        description = "Unified semantic search. Returns entities and/or references based on target parameter."
     )]
-    pub async fn get_composition_graph(
+    pub async fn search(
         &self,
-        Parameters(params): Parameters<GetCompositionGraphParams>,
+        Parameters(params): Parameters<SearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(id = %params.entity_id, "Running get_composition_graph tool");
+        tracing::info!(query = %params.query, target = ?params.target, "Running search tool");
 
         let service = self.resolve::<GraphService>();
-        let graph = service
-            .get_composition_graph(
-                &params.entity_id,
-                params.direction.as_deref().unwrap_or("both"),
-                params.max_depth.unwrap_or(10),
-            )
-            .await?;
+        let target: ServiceSearchTarget = params.target.unwrap_or_default().into();
+        let limit = params.limit.unwrap_or(20);
+        let min_score = params.min_score.unwrap_or(0.3);
 
-        tracing::info!(
-            id = %params.entity_id,
-            ancestors = graph.ancestors.len(),
-            descendants = graph.descendants.len(),
-            "Retrieved composition graph"
-        );
-
-        // Spawn visualizer if requested
-        if params.visualize == Some(true) {
-            spawn_visualizer(&graph)?;
-        }
-
-        Response(graph).into()
-    }
-
-    /// Query subgraph around an entity within N hops.
-    #[tool(
-        description = "Extract subgraph around an entity within N hops. Returns nodes and edges."
-    )]
-    pub async fn query_subgraph(
-        &self,
-        Parameters(params): Parameters<QuerySubgraphParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::info!(
-            id = %params.entity_id,
-            hops = ?params.hops,
-            "Running query_subgraph tool"
-        );
-
-        let visualize = params.visualize;
-
-        let service = self.resolve::<GraphService>();
-        let subgraph = service
-            .query_subgraph(
-                &params.entity_id,
-                params.hops.unwrap_or(2),
-                params.relationship_types,
-            )
-            .await?;
-
-        tracing::info!(
-            nodes = subgraph.nodes.len(),
-            edges = subgraph.edges.len(),
-            "Retrieved subgraph"
-        );
-
-        // Spawn visualizer if requested
-        if visualize == Some(true) {
-            spawn_visualizer(&subgraph)?;
-        }
-
-        Response(subgraph).into()
-    }
-
-    /// Search document references by semantic similarity.
-    #[tool(
-        description = "Search document references by semantic similarity. Returns matching references with scores."
-    )]
-    pub async fn search_documents(
-        &self,
-        Parameters(params): Parameters<SearchDocumentsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::info!(query = %params.query, "Running search_documents tool");
-
-        let service = self.resolve::<GraphService>();
-        let results = service
-            .search_documents(
+        let result = service
+            .unified_search(
                 &params.query,
-                params.limit.unwrap_or(10),
-                params.min_score.unwrap_or(0.5),
-            )
-            .await?;
-
-        tracing::info!(count = results.len(), "Search completed");
-
-        Response(results).into()
-    }
-
-    /// Search entities by semantic similarity.
-    #[tool(
-        description = "Search entities by semantic similarity to a query. Returns matching entities with scores."
-    )]
-    pub async fn semantic_search(
-        &self,
-        Parameters(params): Parameters<SemanticSearchParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::info!(query = %params.query, "Running semantic_search tool");
-
-        let service = self.resolve::<GraphService>();
-        let results = service
-            .semantic_search(
-                &params.query,
-                params.limit.unwrap_or(10),
-                params.min_score.unwrap_or(0.5),
+                target,
+                limit,
+                min_score,
                 params.scope.as_deref(),
             )
             .await?;
 
-        tracing::info!(count = results.len(), "Search completed");
+        tracing::info!(
+            entities = result.entities.len(),
+            references = result.references.len(),
+            "Search completed"
+        );
 
-        Response(results).into()
+        Response(result).into()
+    }
+
+    /// Semantic subgraph extraction with Best-First Search.
+    #[tool(
+        description = "Semantic subgraph extraction with relevance-based pruning. Returns optimized graph within budget."
+    )]
+    pub async fn query(
+        &self,
+        Parameters(params): Parameters<QueryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        tracing::info!(
+            entity_id = ?params.entity_id,
+            semantic_query = ?params.semantic_query,
+            "Running query tool"
+        );
+
+        // Validate: need at least one of entity_id or semantic_query
+        if params.entity_id.is_none() && params.semantic_query.is_none() {
+            return Err(McpError::invalid_params(
+                "Either entity_id or semantic_query must be provided",
+                None,
+            ));
+        }
+
+        let service = self.resolve::<GraphService>();
+
+        // Build service params
+        let service_params = SemanticQueryParams {
+            entity_id: params.entity_id,
+            semantic_query: params.semantic_query,
+            max_nodes: params.max_nodes.unwrap_or(50) as usize,
+            max_tokens: params.max_tokens.unwrap_or(4000) as usize,
+            min_relevance: params.min_relevance.unwrap_or(0.3),
+            scoring_strategy: params.scoring_strategy.unwrap_or_default().into(),
+            relationship_types: params.relationship_types,
+        };
+
+        // Execute semantic query - returns QueryGraph directly
+        let result = service.semantic_query(service_params).await?;
+
+        tracing::info!(
+            nodes = result.nodes.len(),
+            edges = result.edges.len(),
+            tokens = result.stats.estimated_tokens,
+            pruned = result.stats.nodes_pruned,
+            "Query completed"
+        );
+
+        // Spawn visualizer if requested
+        if params.visualize == Some(true) {
+            spawn_visualizer(&result)?;
+        }
+
+        Response(result).into()
     }
 }

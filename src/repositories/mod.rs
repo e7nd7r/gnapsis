@@ -15,5 +15,5 @@ pub use document::{
     UpdateCodeReferenceParams, UpdateTextReferenceParams,
 };
 pub use entity::EntityRepository;
-pub use query::QueryRepository;
+pub use query::{QueryRepository, Subgraph, SubgraphEdge, SubgraphNode};
 pub use schema::{ProjectStats, SchemaRepository, ScopeInfo};

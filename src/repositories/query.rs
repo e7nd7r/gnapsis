@@ -9,10 +9,75 @@ use crate::context::Context;
 use crate::di::FromContext;
 use crate::error::AppError;
 use crate::models::{
-    CategoryClassification, CodeReference, CompositionNode, Entity, EntityWithContext,
-    EntityWithReference, Reference, SearchResult, Subgraph, SubgraphEdge, SubgraphNode,
-    TextReference,
+    CategoryClassification, CodeReference, Entity, EntityWithContext, EntityWithReference,
+    Reference, SearchResult, TextReference,
 };
+
+// ============================================================================
+// Internal Types for Graph Traversal
+// ============================================================================
+
+/// Node in a subgraph traversal - either an Entity or DocumentReference.
+/// Internal type used by BFS algorithm.
+#[derive(Debug, Clone)]
+pub enum SubgraphNode {
+    /// An entity node in the subgraph.
+    Entity {
+        /// Entity ID.
+        id: String,
+        /// Entity name.
+        name: String,
+        /// Entity description.
+        description: String,
+        /// Distance from the starting node.
+        distance: u32,
+        /// Category classification (if any).
+        category: Option<String>,
+    },
+    /// A document reference node in the subgraph.
+    DocumentReference {
+        /// Reference ID.
+        id: String,
+        /// Path to the document.
+        document_path: String,
+        /// Starting line number (1-indexed).
+        start_line: u32,
+        /// Ending line number (1-indexed).
+        end_line: u32,
+        /// Description of what this reference points to.
+        description: String,
+        /// Distance from the starting node.
+        distance: u32,
+    },
+}
+
+/// Edge in a subgraph traversal.
+/// Internal type used by BFS algorithm.
+#[derive(Debug, Clone)]
+pub struct SubgraphEdge {
+    /// Source node ID.
+    pub from_id: String,
+    /// Target node ID.
+    pub to_id: String,
+    /// Relationship type (e.g., BELONGS_TO, HAS_REFERENCE, CALLS).
+    pub relationship: String,
+    /// Optional note on the relationship.
+    pub note: Option<String>,
+}
+
+/// A complete subgraph with nodes and edges.
+/// Internal type used by BFS algorithm.
+#[derive(Debug, Clone)]
+pub struct Subgraph {
+    /// All nodes in the subgraph.
+    pub nodes: Vec<SubgraphNode>,
+    /// All edges in the subgraph.
+    pub edges: Vec<SubgraphEdge>,
+}
+
+// ============================================================================
+// Repository
+// ============================================================================
 
 /// Repository for graph traversal and search queries.
 #[derive(FromContext, Clone)]
@@ -242,127 +307,6 @@ impl QueryRepository {
         }
 
         Ok(entities)
-    }
-
-    /// Get composition ancestors (via BELONGS_TO outward).
-    pub async fn get_composition_ancestors(
-        &self,
-        id: &str,
-        max_depth: u32,
-    ) -> Result<Vec<CompositionNode>, AppError> {
-        let max_depth = max_depth.min(20) as i64;
-
-        let mut result = self
-            .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity {id: $id})-[:BELONGS_TO*1..]->(ancestor:Entity)
-                     WITH ancestor, length(shortestPath((e)-[:BELONGS_TO*]->(ancestor))) AS depth
-                     WHERE depth <= $max_depth
-                     OPTIONAL MATCH (ancestor)-[:CLASSIFIED_AS]->(c:Category)
-                     RETURN ancestor, depth, collect(c.name)[0] AS category
-                     ORDER BY depth",
-                )
-                .param("id", id)
-                .param("max_depth", max_depth),
-            )
-            .await?;
-
-        let mut ancestors = Vec::new();
-        while let Some(row) = result.next().await? {
-            let node: neo4rs::Node = row.get("ancestor").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get ancestor node".to_string(),
-            })?;
-            let depth: i64 = row.get("depth").unwrap_or(1);
-            let category: Option<String> = row.get("category").ok();
-
-            ancestors.push(CompositionNode {
-                id: node.get("id").unwrap_or_default(),
-                name: node.get("name").unwrap_or_default(),
-                depth: depth as i32,
-                category,
-            });
-        }
-
-        Ok(ancestors)
-    }
-
-    /// Get composition descendants (via BELONGS_TO inward).
-    pub async fn get_composition_descendants(
-        &self,
-        id: &str,
-        max_depth: u32,
-    ) -> Result<Vec<CompositionNode>, AppError> {
-        let max_depth = max_depth.min(20) as i64;
-
-        let mut result = self
-            .graph
-            .execute(
-                query(
-                    "MATCH (descendant:Entity)-[:BELONGS_TO*1..]->(e:Entity {id: $id})
-                     WITH descendant, length(shortestPath((descendant)-[:BELONGS_TO*]->(e))) AS depth
-                     WHERE depth <= $max_depth
-                     OPTIONAL MATCH (descendant)-[:CLASSIFIED_AS]->(c:Category)
-                     RETURN descendant, depth, collect(c.name)[0] AS category
-                     ORDER BY depth",
-                )
-                .param("id", id)
-                .param("max_depth", max_depth),
-            )
-            .await?;
-
-        let mut descendants = Vec::new();
-        while let Some(row) = result.next().await? {
-            let node: neo4rs::Node = row.get("descendant").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get descendant node".to_string(),
-            })?;
-            let depth: i64 = row.get("depth").unwrap_or(1);
-            let category: Option<String> = row.get("category").ok();
-
-            descendants.push(CompositionNode {
-                id: node.get("id").unwrap_or_default(),
-                name: node.get("name").unwrap_or_default(),
-                depth: depth as i32,
-                category,
-            });
-        }
-
-        Ok(descendants)
-    }
-
-    /// Get entity for composition graph starting node.
-    pub async fn get_entity_for_composition(&self, id: &str) -> Result<CompositionNode, AppError> {
-        let mut result = self
-            .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity {id: $id})
-                     OPTIONAL MATCH (e)-[:CLASSIFIED_AS]->(c:Category)
-                     RETURN e, collect(c.name)[0] AS category",
-                )
-                .param("id", id),
-            )
-            .await?;
-
-        let row = result
-            .next()
-            .await?
-            .ok_or_else(|| AppError::EntityNotFound(id.to_string()))?;
-
-        let node: neo4rs::Node = row.get("e").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get entity node".to_string(),
-        })?;
-        let category: Option<String> = row.get("category").ok();
-
-        Ok(CompositionNode {
-            id: node.get("id").unwrap_or_default(),
-            name: node.get("name").unwrap_or_default(),
-            depth: 0,
-            category,
-        })
     }
 
     /// Query subgraph around an entity within N hops.

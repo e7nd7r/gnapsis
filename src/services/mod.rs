@@ -17,6 +17,9 @@ pub use entity::{
     CreateEntityInput, CreateEntityOutput, EntityInfo, EntityService, UpdateEntityInput,
     UpdateEntityOutput, ValidationError,
 };
-pub use graph::GraphService;
+pub use graph::{
+    EntityMatch, GraphService, ReferenceMatch, ScoringStrategy, SearchTarget, SemanticQueryParams,
+    UnifiedSearchResult,
+};
 pub use lsp::{LspError, LspService, LspSymbol};
 pub use validation::{ValidationIssue, ValidationService};
