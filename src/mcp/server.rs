@@ -44,6 +44,7 @@ impl McpServer {
             + Self::reference_tools()
             + Self::sync_tools()
             + Self::validation_tools()
+            + Self::analysis_tools()
     }
 
     /// Resolve a dependency from the context.
@@ -123,10 +124,13 @@ A knowledge graph for understanding codebases through semantic relationships.
 
 - **get_changed_files** - Get list of files changed between commits
 
+## Analysis Tools
+
+- **analyze_document** - Unified document analysis: tracked refs with staleness, untracked symbols, git diffs
+
 ## Validation & LSP Tools
 
 - **validate_graph** - Check graph integrity (orphans, cycles, scope violations, unclassified)
-- **lsp_analyze** - Analyze LSP symbols to find untracked code
 - **lsp_refresh** - Refresh document references using LSP symbol locations
 "#
                 .to_string(),

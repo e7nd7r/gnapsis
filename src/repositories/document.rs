@@ -66,6 +66,13 @@ pub struct DocumentRepository {
 }
 
 impl DocumentRepository {
+    /// Get access to the graph for custom queries.
+    pub fn graph(&self) -> &Graph {
+        &self.graph
+    }
+}
+
+impl DocumentRepository {
     // ============================================
     // Document operations
     // ============================================

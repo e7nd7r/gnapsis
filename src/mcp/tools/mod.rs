@@ -1,5 +1,6 @@
 //! MCP tool implementations organized by domain.
 
+pub mod analysis;
 pub mod entity;
 pub mod project;
 pub mod query;

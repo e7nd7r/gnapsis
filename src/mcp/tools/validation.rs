@@ -40,15 +40,6 @@ fn default_true() -> Option<bool> {
     Some(true)
 }
 
-/// Parameters for lsp_analyze tool.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LspAnalyzeParams {
-    /// Path to the document being analyzed.
-    pub document_path: String,
-    /// LSP symbols from the language server.
-    pub lsp_symbols: Vec<LspSymbol>,
-}
-
 /// An LSP symbol from the language server.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct LspSymbol {
@@ -97,41 +88,6 @@ pub struct ValidateGraphResult {
     /// Entities without any classification.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unclassified: Vec<ValidationIssue>,
-}
-
-/// Result of LSP analysis.
-#[derive(Debug, Serialize)]
-pub struct LspAnalyzeResult {
-    /// Document path analyzed.
-    pub document_path: String,
-    /// Total symbols from LSP.
-    pub total_symbols: usize,
-    /// Symbols already tracked in the graph.
-    pub tracked_count: usize,
-    /// Symbols not yet in the graph.
-    pub untracked: Vec<UntrackedSymbol>,
-}
-
-/// An untracked LSP symbol with suggestions.
-#[derive(Debug, Serialize)]
-pub struct UntrackedSymbol {
-    /// Symbol name.
-    pub name: String,
-    /// LSP symbol kind.
-    pub kind: i32,
-    /// Human-readable kind name.
-    pub kind_name: String,
-    /// Starting line.
-    pub start_line: u32,
-    /// Ending line.
-    pub end_line: u32,
-    /// Container name if available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub container_name: Option<String>,
-    /// Suggested scope for entity creation.
-    pub suggested_scope: String,
-    /// Suggested category for classification.
-    pub suggested_category: String,
 }
 
 /// Result of LSP refresh.
@@ -228,85 +184,6 @@ impl McpServer {
             valid = result.valid,
             issues = result.issue_count,
             "Graph validation complete"
-        );
-
-        Response(result).into()
-    }
-
-    /// Analyze LSP symbols to find untracked code.
-    ///
-    /// Compares LSP symbols with tracked DocumentReferences to identify
-    /// symbols that haven't been added to the knowledge graph yet.
-    #[tool(
-        description = "Analyze LSP symbols to find untracked code. Returns symbols not yet in the knowledge graph with suggestions."
-    )]
-    pub async fn lsp_analyze(
-        &self,
-        Parameters(params): Parameters<LspAnalyzeParams>,
-    ) -> Result<CallToolResult, McpError> {
-        tracing::info!(
-            path = %params.document_path,
-            symbols = params.lsp_symbols.len(),
-            "Running lsp_analyze tool"
-        );
-
-        let doc_repo = self.resolve::<DocumentRepository>();
-
-        // Get existing references for this document
-        let existing_refs = doc_repo
-            .get_document_references(&params.document_path)
-            .await
-            .map_err(|e: AppError| McpError::from(e))?;
-
-        // Build set of tracked symbols (by lsp_symbol name, only for CodeReferences)
-        let tracked_symbols: std::collections::HashSet<String> = existing_refs
-            .iter()
-            .filter_map(|r| {
-                if let Reference::Code(code_ref) = r {
-                    Some(code_ref.lsp_symbol.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Find untracked symbols
-        let mut untracked = Vec::new();
-        for symbol in &params.lsp_symbols {
-            let full_name = if let Some(container) = &symbol.container_name {
-                format!("{}::{}", container, symbol.name)
-            } else {
-                symbol.name.clone()
-            };
-
-            if !tracked_symbols.contains(&full_name) && !tracked_symbols.contains(&symbol.name) {
-                let (kind_name, suggested_scope, suggested_category) =
-                    lsp_kind_to_suggestions(symbol.kind);
-
-                untracked.push(UntrackedSymbol {
-                    name: full_name,
-                    kind: symbol.kind,
-                    kind_name: kind_name.to_string(),
-                    start_line: symbol.start_line,
-                    end_line: symbol.end_line,
-                    container_name: symbol.container_name.clone(),
-                    suggested_scope: suggested_scope.to_string(),
-                    suggested_category: suggested_category.to_string(),
-                });
-            }
-        }
-
-        let result = LspAnalyzeResult {
-            document_path: params.document_path,
-            total_symbols: params.lsp_symbols.len(),
-            tracked_count: params.lsp_symbols.len() - untracked.len(),
-            untracked,
-        };
-
-        tracing::info!(
-            tracked = result.tracked_count,
-            untracked = result.untracked.len(),
-            "LSP analysis complete"
         );
 
         Response(result).into()
@@ -435,7 +312,7 @@ fn parse_lsp_range_lines(lsp_range: &str) -> Option<(u32, u32)> {
 }
 
 /// Map LSP SymbolKind to scope and category suggestions.
-fn lsp_kind_to_suggestions(kind: i32) -> (&'static str, &'static str, &'static str) {
+pub fn lsp_kind_to_suggestions(kind: i32) -> (&'static str, &'static str, &'static str) {
     // LSP SymbolKind values: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#symbolKind
     match kind {
         1 => ("File", "Namespace", "module"),      // File
