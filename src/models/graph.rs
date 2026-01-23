@@ -122,6 +122,24 @@ pub struct QueryEntitySummary {
     pub category: Option<String>,
 }
 
+/// Summary of an entity for project overview.
+/// Includes parent info for hierarchy display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectEntitySummary {
+    /// Entity ID.
+    pub id: String,
+    /// Entity name.
+    pub name: String,
+    /// Entity description.
+    pub description: String,
+    /// Category (if classified).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Parent entity ID (for hierarchy).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
 /// Statistics about the semantic query execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryGraphStats {

@@ -10,7 +10,7 @@ use crate::di::FromContext;
 use crate::error::AppError;
 use crate::models::{
     CategoryClassification, CodeReference, Entity, EntityWithContext, EntityWithReference,
-    Reference, SearchResult, TextReference,
+    ProjectEntitySummary, Reference, SearchResult, TextReference,
 };
 
 // ============================================================================
@@ -491,6 +491,41 @@ impl QueryRepository {
         }
 
         Ok(results)
+    }
+
+    /// Get entity summaries by scope with category info.
+    /// Returns entities with their primary category for project overview.
+    pub async fn get_entity_summaries_by_scope(
+        &self,
+        scope: &str,
+    ) -> Result<Vec<ProjectEntitySummary>, AppError> {
+        let mut result = self
+            .graph
+            .execute(
+                query(
+                    "MATCH (e:Entity)-[:CLASSIFIED_AS]->(c:Category)-[:IN_SCOPE]->(s:Scope {name: $scope})
+                     OPTIONAL MATCH (e)-[:BELONGS_TO]->(parent:Entity)
+                     RETURN e.id AS id, e.name AS name, e.description AS description,
+                            collect(DISTINCT c.name)[0] AS category,
+                            collect(DISTINCT parent.id)[0] AS parent_id
+                     ORDER BY e.name",
+                )
+                .param("scope", scope),
+            )
+            .await?;
+
+        let mut summaries = Vec::new();
+        while let Some(row) = result.next().await? {
+            summaries.push(ProjectEntitySummary {
+                id: row.get("id").unwrap_or_default(),
+                name: row.get("name").unwrap_or_default(),
+                description: row.get("description").unwrap_or_default(),
+                category: row.get("category").ok(),
+                parent_id: row.get("parent_id").ok(),
+            });
+        }
+
+        Ok(summaries)
     }
 
     /// Search document references by embedding similarity.
