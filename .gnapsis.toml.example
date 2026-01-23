@@ -1,0 +1,18 @@
+# Gnapsis Configuration Example
+# Copy this file to .gnapsis.toml and update with your settings
+
+[project]
+name = "my-project"
+
+[neo4j]
+uri = "bolt://localhost:7687"
+username = "neo4j"
+password = "your-password"
+database = "neo4j"
+
+# Alternatively, use environment variables:
+# NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE
+
+[embedding]
+# Model for generating embeddings (default: BAAI/bge-small-en-v1.5)
+# model = "BAAI/bge-small-en-v1.5"

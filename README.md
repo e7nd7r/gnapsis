@@ -1,44 +1,58 @@
 # Gnapsis
 
-Code intelligence graph - MCP server for knowledge management with Neo4j.
+Code intelligence graph - MCP server for semantic codebase understanding with Neo4j.
 
-## Overview
+## What is Gnapsis?
 
-Gnapsis is an MCP (Model Context Protocol) server that helps AI assistants understand and navigate codebases through a semantic knowledge graph. It tracks entities (modules, structs, functions), their relationships, and anchors them to specific code locations.
+Gnapsis is an MCP (Model Context Protocol) server that helps AI assistants understand codebases through a semantic knowledge graph. Instead of just searching text, it tracks **entities** (domains, features, modules, structs, functions), their **relationships**, and anchors them to specific **code locations**.
+
+Think of it as a structured memory layer for AI coding assistants.
 
 ## Features
 
-- **Semantic Knowledge Graph**: Track entities at multiple scope levels (Domain → Feature → Namespace → Component → Unit)
-- **Document References**: Anchor entities to code/documentation with line-level precision
-- **Staleness Detection**: Detect when references become outdated via git hunk overlap
-- **Semantic Search**: Find entities and references by meaning, not just keywords
-- **Subgraph Queries**: Extract relevant context within token budgets using Best-First Search
-- **LSP Integration**: Validate and refresh code references using language server data
+- **Semantic Knowledge Graph**: Organize entities in a hierarchy (Domain → Feature → Namespace → Component → Unit)
+- **Document References**: Anchor entities to code with line-level precision
+- **Semantic Search**: Find entities by meaning, not just keywords
+- **Subgraph Queries**: Extract relevant context within token budgets
+- **Staleness Detection**: Know when references become outdated via git
+- **TOON Output**: Token-efficient output format (40-60% fewer tokens than JSON)
 
-## Requirements
+## Quick Start
 
-- Rust 1.75+
-- Neo4j 5.x with APOC plugin
-- Git (for staleness detection)
+### 1. Prerequisites
 
-## Installation
+**Neo4j 5.x** with GDS plugin:
 
 ```bash
-# Clone the repository
+# Using Docker
+docker run -d \
+  --name neo4j \
+  -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/your-password \
+  -e NEO4J_PLUGINS='["graph-data-science"]' \
+  neo4j:5
+```
+
+**Rust 1.75+** for building from source.
+
+### 2. Installation
+
+```bash
 git clone https://github.com/e7nd7r/gnapsis.git
 cd gnapsis
 
-# Build
-cargo build --release
-
-# The binary is at target/release/gnapsis
+# Install the binary
+cargo install --path .
 ```
 
-## Configuration
+### 3. Configuration
 
-Create a `.gnapsis.toml` in your project root:
+Create `.gnapsis.toml` in your project root (see `.gnapsis.toml.example`):
 
 ```toml
+[project]
+name = "my-project"
+
 [neo4j]
 uri = "bolt://localhost:7687"
 username = "neo4j"
@@ -46,123 +60,146 @@ password = "your-password"
 database = "neo4j"
 ```
 
-Or use environment variables:
+Or use environment variables: `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`.
 
-```bash
-export NEO4J_URI="bolt://localhost:7687"
-export NEO4J_USERNAME="neo4j"
-export NEO4J_PASSWORD="your-password"
-```
+### 4. MCP Setup
 
-## MCP Server Usage
-
-Add to your Claude Code MCP configuration:
+Add to your Claude Code configuration (`~/.claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "gnapsis": {
-      "command": "/path/to/gnapsis",
+      "command": "gnapsis",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-## Tools (16 total)
+### 5. Initialize the Project
 
-### Project Tools
+Once connected via MCP, initialize the database:
 
-| Tool | Description |
-|------|-------------|
-| `init_project` | Initialize database schema and seed data |
-| `project_overview` | Get full context: taxonomy, entity hierarchy, stats. Optionally generates a skill file |
+```
+Use init_project to set up the database schema
+```
 
-### Taxonomy Tools
+This creates the schema, scopes, and default categories.
 
-| Tool | Description |
-|------|-------------|
-| `create_category` | Create new category at a scope |
+## Workflow
 
-### Entity Tools
+### Understanding the Hierarchy
 
-| Tool | Description |
-|------|-------------|
-| `create_entity` | Create entity with commands (Add, Relate, Link) |
-| `update_entity` | Update entity with commands (re-embeds on description change) |
-| `delete_entity` | Delete entity (must have no children) |
+Gnapsis organizes knowledge in **scopes** (levels of abstraction):
 
-### Reference Tools
+```
+Domain          (e.g., "Authentication", "Payments")
+  └── Feature   (e.g., "JWT Validation", "OAuth Flow")
+      └── Namespace   (e.g., "auth::providers", "services")
+          └── Component   (e.g., UserService struct, AuthTrait)
+              └── Unit   (e.g., validate() method, MAX_RETRIES constant)
+```
 
-| Tool | Description |
-|------|-------------|
-| `alter_references` | Bulk update/delete references (auto-updates commit SHA) |
-
-### Query Tools
-
-| Tool | Description |
-|------|-------------|
-| `get_entity` | Get entity with full context (classifications, references, hierarchy) |
-| `find_entities` | Find entities by scope, category, or parent |
-| `get_document_entities` | Get all entities in a document |
-| `search` | Unified semantic search across entities and/or references |
-| `query` | Semantic subgraph extraction with Best-First Search |
-
-### Sync Tools
-
-| Tool | Description |
-|------|-------------|
-| `get_changed_files` | Get list of files changed between commits |
-
-### Analysis Tools
-
-| Tool | Description |
-|------|-------------|
-| `analyze_document` | Unified document analysis: tracked refs, staleness, untracked symbols, diffs |
-
-### Validation & LSP Tools
-
-| Tool | Description |
-|------|-------------|
-| `validate_graph` | Check graph integrity (orphans, cycles, scope violations, unclassified, no references) |
-| `lsp_refresh` | Refresh document references using LSP symbol locations |
-
-## Concepts
-
-### Scopes
-
-Entities are organized in a hierarchy of scopes:
-
-| Scope | Description | Example |
-|-------|-------------|---------|
-| **Domain** | High-level business domain | "Authentication", "Payments" |
-| **Feature** | Functional capability | "JWT Validation", "OAuth Flow" |
-| **Namespace** | Code organization unit | "auth::providers", "services" |
-| **Component** | Structural code element | Struct, Class, Module |
-| **Unit** | Atomic code element | Function, Method, Constant |
-
-### Categories
-
-Categories classify entities within their scope. Examples:
+Each entity has a **category** that classifies it within its scope:
 - Domain: `core`, `infrastructure`
-- Feature: `api`, `ui`, `background`
-- Namespace: `module`, `package`
-- Component: `struct`, `class`, `trait`, `enum`
-- Unit: `function`, `method`, `constant`
+- Feature: `functional`, `technical`, `non-functional`
+- Namespace: `module`, `library`
+- Component: `struct`, `trait`, `enum`, `class`
+- Unit: `function`, `method`, `constant`, `field`
 
-### References
+### Creating Entities
 
-References anchor entities to code locations:
+Entities need: **name**, **description**, **category**, and at least one **reference** to code.
 
-- **Code References**: Point to LSP symbols with line ranges
-- **Text References**: Point to documentation sections with optional anchors
+Example - creating a domain:
 
-### Relationships
+```
+Use create_entity with:
+- name: "Authentication"
+- description: "Domain for user authentication and authorization"
+- category_ids: [<core-domain-category-id>]
+- commands: [{ type: "add", ref_type: "text", document_path: "README.md", description: "Auth section", start_line: 10, end_line: 20 }]
+```
 
-- **BELONGS_TO**: Composition hierarchy (child belongs to parent)
-- **RELATED_TO**: Semantic association with optional note
-- **CALLS/IMPORTS/IMPLEMENTS/INSTANTIATES**: Code-level links
+Example - creating a component under a namespace:
+
+```
+Use create_entity with:
+- name: "UserService"
+- description: "Service for user management operations"
+- category_ids: [<struct-category-id>]
+- parent_ids: [<services-namespace-id>]
+- commands: [{ type: "add", ref_type: "code", document_path: "src/services/user.rs", lsp_symbol: "UserService", description: "UserService struct" }]
+```
+
+### Querying the Graph
+
+**Get project overview** - See all domains, features, namespaces, and categories:
+```
+Use project_overview
+```
+
+**Semantic search** - Find entities by meaning:
+```
+Use search with query: "user authentication validation"
+```
+
+**Subgraph query** - Get related entities within a token budget:
+```
+Use query with semantic_query: "how does authentication work"
+```
+
+**Find entities** - Filter by scope, category, or parent:
+```
+Use find_entities with scope: "Component", category: "struct"
+```
+
+### Analyzing Documents
+
+Check what's tracked in a file and detect stale references:
+```
+Use analyze_document with document_path: "src/services/user.rs"
+```
+
+### Validating the Graph
+
+Check for integrity issues (orphans, cycles, missing references):
+```
+Use validate_graph
+```
+
+## Output Formats
+
+Tools that return large results support **TOON** (Token-Oriented Object Notation) for 40-60% token savings:
+
+```
+Use query with semantic_query: "...", output_format: "toon"
+```
+
+Supported on: `query`, `search`, `analyze_document`, `project_overview`
+
+## Tools Reference
+
+| Tool | Description |
+|------|-------------|
+| `init_project` | Initialize database schema |
+| `project_overview` | Get taxonomy, entities, and stats |
+| `create_category` | Create new category at a scope |
+| `create_entity` | Create entity with references |
+| `update_entity` | Update entity (re-embeds on description change) |
+| `delete_entity` | Delete entity (must have no children) |
+| `get_entity` | Get entity with full context |
+| `find_entities` | Find entities by scope/category/parent |
+| `search` | Semantic search across entities and references |
+| `query` | Semantic subgraph extraction |
+| `get_document_entities` | Get entities referenced in a document |
+| `analyze_document` | Document analysis with staleness detection |
+| `alter_references` | Bulk update/delete references |
+| `validate_graph` | Check graph integrity |
+| `lsp_refresh` | Refresh references using LSP data |
+| `get_changed_files` | Get files changed between commits |
 
 ## License
 
-MIT
+MIT - See [LICENSE](LICENSE) for details.

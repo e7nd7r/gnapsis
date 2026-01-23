@@ -171,7 +171,8 @@ impl ValidationService {
             .graph
             .execute(query(
                 "MATCH (e:Entity)
-                 WHERE NOT (e)-[:HAS_REFERENCE]->(:DocumentReference)
+                 WHERE NOT (e)-[:HAS_REFERENCE]->(:CodeReference)
+                   AND NOT (e)-[:HAS_REFERENCE]->(:TextReference)
                  RETURN e.id AS id, e.name AS name",
             ))
             .await?;

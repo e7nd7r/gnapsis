@@ -132,6 +132,6 @@ impl McpServer {
             "Created category"
         );
 
-        Response(response).into()
+        Response(response, None).into()
     }
 }

@@ -25,4 +25,11 @@ Thumbs.db
 # Logs
 *.log
 
+# Local project files
 .trello-vectors.db
+trello-project.toml
+.mcp.json
+.nvim/
+
+# Local config (use .gnapsis.toml.example as template)
+.gnapsis.toml

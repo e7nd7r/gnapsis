@@ -9,7 +9,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-use crate::mcp::protocol::Response;
+use crate::mcp::protocol::{OutputFormat, Response};
 use crate::mcp::server::McpServer;
 use crate::migrations::run_migrations;
 use crate::models::{Category, ProjectEntitySummary};
@@ -39,6 +39,10 @@ pub struct ProjectOverviewParams {
     /// When false, descriptions are truncated to 100 characters.
     #[serde(default)]
     pub include_descriptions: Option<bool>,
+
+    /// Output format: "json" (default) or "toon" (40-60% fewer tokens).
+    #[serde(default)]
+    pub output_format: Option<OutputFormat>,
 }
 
 // ============================================================================
@@ -207,7 +211,7 @@ impl McpServer {
             "Project initialization complete"
         );
 
-        Response(response).into()
+        Response(response, None).into()
     }
 
     /// Get complete project context: taxonomy, entity hierarchy, and statistics.
@@ -326,7 +330,7 @@ impl McpServer {
             "Project overview retrieved"
         );
 
-        Response(response).into()
+        Response(response, params.output_format).into()
     }
 }
 

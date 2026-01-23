@@ -349,7 +349,7 @@ impl McpServer {
 
         tracing::info!(id = %response.entity.id, "Created entity");
 
-        Response(response).into()
+        Response(response, None).into()
     }
 
     /// Update an entity's name, description, categories, parents, or execute commands.
@@ -393,7 +393,7 @@ impl McpServer {
             "Updated entity"
         );
 
-        Response(response).into()
+        Response(response, None).into()
     }
 
     /// Delete an entity from the knowledge graph.
@@ -437,6 +437,6 @@ impl McpServer {
 
         tracing::info!(id = %params.entity_id, "Deleted entity");
 
-        Response(response).into()
+        Response(response, None).into()
     }
 }

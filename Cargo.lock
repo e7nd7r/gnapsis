@@ -2878,6 +2878,7 @@ dependencies = [
  "rmpv",
  "serde",
  "serde_json",
+ "serde_toon",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -4076,6 +4077,7 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -5685,6 +5687,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "serde_toon"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ebe8e7ac690e6534815a610b61f0023b982315cefaf4f55066947df630af942"
+dependencies = [
+ "chrono",
+ "indexmap",
+ "num-bigint",
+ "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

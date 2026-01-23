@@ -200,7 +200,7 @@ impl McpServer {
             "Graph validation complete"
         );
 
-        Response(result).into()
+        Response(result, None).into()
     }
 
     /// Refresh document references using LSP symbol locations.
@@ -301,7 +301,7 @@ impl McpServer {
             "LSP refresh complete"
         );
 
-        Response(result).into()
+        Response(result, None).into()
     }
 }
 

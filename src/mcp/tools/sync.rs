@@ -120,6 +120,6 @@ impl McpServer {
             "Changed files retrieved"
         );
 
-        Response(response).into()
+        Response(response, None).into()
     }
 }

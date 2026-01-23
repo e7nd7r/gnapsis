@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::git::{DiffHunk, GitOps};
-use crate::mcp::protocol::Response;
+use crate::mcp::protocol::{OutputFormat, Response};
 use crate::mcp::server::McpServer;
 use crate::mcp::tools::validation::lsp_kind_to_suggestions;
 use crate::models::Reference;
@@ -44,6 +44,9 @@ pub struct AnalyzeDocumentParams {
     /// If not provided, untracked detection is skipped.
     #[serde(default)]
     pub lsp_symbols: Option<Vec<LspSymbolInput>>,
+    /// Output format: "json" (default) or "toon" (40-60% fewer tokens).
+    #[serde(default)]
+    pub output_format: Option<OutputFormat>,
 }
 
 fn default_true() -> Option<bool> {
@@ -314,7 +317,7 @@ impl McpServer {
             "Document analysis complete"
         );
 
-        Response(result).into()
+        Response(result, params.output_format).into()
     }
 }
 

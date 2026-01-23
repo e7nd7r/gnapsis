@@ -172,7 +172,7 @@ impl McpServer {
                         index
                     );
 
-                    return Response(response).into();
+                    return Response(response, None).into();
                 }
             }
         }
@@ -190,7 +190,7 @@ impl McpServer {
             "References altered successfully"
         );
 
-        Response(response).into()
+        Response(response, None).into()
     }
 }
 

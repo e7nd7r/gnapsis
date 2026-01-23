@@ -1,7 +1,19 @@
 //! MCP protocol response helpers.
 
 use rmcp::model::CallToolResult;
-use serde::Serialize;
+use rmcp::schemars::{self, JsonSchema};
+use serde::{Deserialize, Serialize};
+
+/// Output format for tool responses.
+#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputFormat {
+    /// JSON format (default).
+    #[default]
+    Json,
+    /// TOON (Token-Oriented Object Notation) - 40-60% fewer tokens.
+    Toon,
+}
 
 /// Single-item response that serializes as the raw inner value.
 ///
@@ -12,10 +24,22 @@ use serde::Serialize;
 ///
 /// ```ignore
 /// let entity = Entity { id: "123", name: "Foo" };
-/// Response(entity).into()
-/// // Serializes as: { "id": "123", "name": "Foo" }
+/// Response(entity).into()  // JSON output (default)
+/// Response(entity, Some(OutputFormat::Toon)).into()  // TOON output
 /// ```
-pub struct Response<T>(pub T);
+pub struct Response<T>(pub T, pub Option<OutputFormat>);
+
+impl<T> Response<T> {
+    /// Create a response with default (JSON) format.
+    pub fn json(data: T) -> Self {
+        Response(data, None)
+    }
+
+    /// Create a response with TOON format.
+    pub fn toon(data: T) -> Self {
+        Response(data, Some(OutputFormat::Toon))
+    }
+}
 
 impl<T: Serialize> Serialize for Response<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -28,10 +52,19 @@ impl<T: Serialize> Serialize for Response<T> {
 
 impl<T: Serialize> From<Response<T>> for Result<CallToolResult, rmcp::model::ErrorData> {
     fn from(response: Response<T>) -> Self {
-        Ok(CallToolResult::success(vec![rmcp::model::Content::json(
-            serde_json::to_value(response).unwrap(),
-        )
-        .unwrap()]))
+        match response.1.unwrap_or_default() {
+            OutputFormat::Json => Ok(CallToolResult::success(vec![rmcp::model::Content::json(
+                serde_json::to_value(&response.0).unwrap(),
+            )
+            .unwrap()])),
+            OutputFormat::Toon => {
+                let toon_str = serde_toon::to_string(&response.0)
+                    .unwrap_or_else(|e| format!("TOON serialization error: {}", e));
+                Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+                    toon_str,
+                )]))
+            }
+        }
     }
 }
 
@@ -81,3 +114,4 @@ impl<T: Serialize> From<PaginatedResponse<T>> for Result<CallToolResult, rmcp::m
         .unwrap()]))
     }
 }
+

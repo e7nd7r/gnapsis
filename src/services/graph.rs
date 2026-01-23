@@ -759,9 +759,25 @@ fn estimate_tokens(entity: &Entity) -> usize {
     (char_count as f32 * TOKENS_PER_CHAR).ceil() as usize
 }
 
-/// Parse LSP range JSON to extract start and end line numbers.
+/// Parse LSP range to extract start and end line numbers.
+///
+/// Supports formats:
+/// - Simple: "startLine:startChar-endLine:endChar" (e.g., "173:0-247:0")
+/// - JSON: {"start":{"line":X,"character":Y},"end":{"line":Z,"character":W}}
+///
 /// Returns (start_line, end_line) or (1, 1) if parsing fails.
 fn parse_lsp_range(lsp_range: &str) -> (u32, u32) {
+    // Try simple format first: "startLine:startChar-endLine:endChar"
+    if let Some((start_part, end_part)) = lsp_range.split_once('-') {
+        if let (Some(start_line), Some(end_line)) = (
+            start_part.split(':').next().and_then(|s| s.parse::<u32>().ok()),
+            end_part.split(':').next().and_then(|s| s.parse::<u32>().ok()),
+        ) {
+            // Already 1-indexed in simple format
+            return (start_line, end_line);
+        }
+    }
+
     // Try JSON format: {"start":{"line":X,"character":Y},"end":{"line":Z,"character":W}}
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(lsp_range) {
         if let (Some(start), Some(end)) = (

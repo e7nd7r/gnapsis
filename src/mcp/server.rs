@@ -128,6 +128,26 @@ Use in create_entity/update_entity `commands` array:
 - `Relate` - Create RELATED_TO with optional note
 - `Link` - Code links (CALLS, IMPORTS, IMPLEMENTS, INSTANTIATES)
 
+## IMPORTANT: Do NOT
+
+- **Do NOT use text references for code files** - Use `ref_type: "code"` with `lsp_symbol` (unless no LSP available)
+- **Do NOT guess lsp_symbol names** - Run `analyze_document` first to see exact symbol names
+- **Do NOT create entities without running analyze_document first** - Get the exact symbols available
+- **Do NOT manually specify line numbers for code refs** - Lines are auto-populated from LSP
+
+## Reference Types
+
+**Code references** (for source files):
+```json
+{"type": "add", "ref_type": "code", "document_path": "src/foo.rs", "lsp_symbol": "McpServer", "description": "..."}
+```
+The `lsp_symbol` must match exactly what `analyze_document` returns in `untracked[].name`.
+
+**Text references** (for markdown, docs, config):
+```json
+{"type": "add", "ref_type": "text", "document_path": "README.md", "start_line": 1, "end_line": 30, "description": "..."}
+```
+
 ## Tools Reference
 
 **Project**: init_project, project_overview

@@ -13,7 +13,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 
-use crate::mcp::protocol::Response;
+use crate::mcp::protocol::{OutputFormat, Response};
 use crate::mcp::server::McpServer;
 use crate::models::QueryGraph;
 use crate::services::{
@@ -132,6 +132,9 @@ pub struct SearchParams {
     /// Filter by scope (entities only).
     #[serde(default)]
     pub scope: Option<String>,
+    /// Output format: "json" (default) or "toon" (40-60% fewer tokens).
+    #[serde(default)]
+    pub output_format: Option<OutputFormat>,
 }
 
 /// Scoring strategy for semantic subgraph extraction.
@@ -181,6 +184,9 @@ pub struct QueryParams {
     /// Open 3D visualization window (spawns separate process).
     #[serde(default)]
     pub visualize: Option<bool>,
+    /// Output format: "json" (default) or "toon" (40-60% fewer tokens).
+    #[serde(default)]
+    pub output_format: Option<OutputFormat>,
 }
 
 // ============================================================================
@@ -202,7 +208,7 @@ impl McpServer {
         let service = self.resolve::<GraphService>();
         let entity = service.get_entity(&params.entity_id).await?;
 
-        Response(entity).into()
+        Response(entity, None).into()
     }
 
     /// Find entities by classification criteria.
@@ -228,7 +234,7 @@ impl McpServer {
             )
             .await?;
 
-        Response(entities).into()
+        Response(entities, None).into()
     }
 
     /// Get all entities with references to a document.
@@ -242,7 +248,7 @@ impl McpServer {
         let service = self.resolve::<GraphService>();
         let entities = service.get_document_entities(&params.document_path).await?;
 
-        Response(entities).into()
+        Response(entities, None).into()
     }
 
     /// Unified semantic search across entities and references.
@@ -276,7 +282,7 @@ impl McpServer {
             "Search completed"
         );
 
-        Response(result).into()
+        Response(result, params.output_format).into()
     }
 
     /// Semantic subgraph extraction with Best-First Search.
@@ -330,6 +336,6 @@ impl McpServer {
             spawn_visualizer(&result)?;
         }
 
-        Response(result).into()
+        Response(result, params.output_format).into()
     }
 }
