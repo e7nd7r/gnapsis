@@ -50,6 +50,8 @@ pub struct Config {
     pub embedding: EmbeddingConfig,
     #[serde(default)]
     pub project: ProjectConfig,
+    #[serde(default)]
+    pub server: ServerConfig,
 }
 
 /// Neo4j database configuration.
@@ -100,6 +102,14 @@ fn default_dimensions() -> usize {
 pub struct ProjectConfig {
     pub name: Option<String>,
     pub repo_path: Option<String>,
+}
+
+/// HTTP server configuration.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ServerConfig {
+    /// API key for authentication (Bearer token).
+    /// Can also be set via GNAPSIS_SERVER_API_KEY env var.
+    pub api_key: Option<String>,
 }
 
 impl Config {
