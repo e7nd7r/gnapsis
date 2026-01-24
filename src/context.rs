@@ -40,7 +40,7 @@ impl Context {
         )
         .await?;
 
-        let embedder = Self::create_embedder(&config)?;
+        let embedder = Self::create_embedder(&config, false)?;
 
         Ok(Self {
             graph: Arc::new(graph),
@@ -51,7 +51,10 @@ impl Context {
     }
 
     /// Create the embedding provider based on configuration.
-    fn create_embedder(config: &Config) -> Result<Embedder<FastEmbedProvider>> {
+    pub fn create_embedder(
+        config: &Config,
+        show_progress: bool,
+    ) -> Result<Embedder<FastEmbedProvider>> {
         let model = match config.embedding.model.as_str() {
             "BAAI/bge-small-en-v1.5" | "bge-small-en-v1.5" => FastEmbedModel::BGESmallENV15,
             "BAAI/bge-base-en-v1.5" | "bge-base-en-v1.5" => FastEmbedModel::BGEBaseENV15,
@@ -65,7 +68,7 @@ impl Context {
 
         let provider_config = ProviderConfig::FastEmbed(FastEmbedConfig {
             model,
-            show_download_progress: false,
+            show_download_progress: show_progress,
             cache_dir: None,
         });
 

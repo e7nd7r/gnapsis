@@ -4,8 +4,10 @@
 //! - `init`: Initialize the database schema
 //! - `mcp`: Run the MCP server (stdio transport)
 //! - `serve`: Run the MCP server (HTTP transport)
+//! - `embedding`: Embedding model management
 //! - `visualize`: Render a graph in 3D
 
+mod embedding;
 mod init;
 mod mcp;
 mod serve;
@@ -13,6 +15,7 @@ mod visualize;
 
 use clap::{Parser, Subcommand};
 
+pub use embedding::EmbeddingCommand;
 pub use visualize::VisualizeCommand;
 
 /// Gnapsis - Code Intelligence Graph
@@ -48,6 +51,12 @@ pub enum Command {
         port: u16,
     },
 
+    /// Embedding model management
+    Embedding {
+        #[command(subcommand)]
+        command: EmbeddingCommand,
+    },
+
     /// Visualize a graph from JSON file in 3D
     Visualize(VisualizeCommand),
 }
@@ -59,6 +68,7 @@ impl App {
             Command::Init => self.run_init().await,
             Command::Mcp => self.run_mcp().await,
             Command::Serve { ref host, port } => self.run_serve(host, port).await,
+            Command::Embedding { command } => command.run(),
             Command::Visualize(cmd) => cmd.run(),
         }
     }
