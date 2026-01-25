@@ -1,6 +1,9 @@
 //! MCP server command handler.
 
 use color_eyre::Result;
+use neo4rs::Graph;
+use raggy::embeddings::{FastEmbedConfig, FastEmbedModel, ProviderConfig};
+use raggy::{Embedder, EmbeddingProvider, FastEmbedProvider};
 use rmcp::ServiceExt;
 
 use crate::config::Config;
@@ -14,10 +17,36 @@ impl App {
     pub async fn run_mcp(&self) -> Result<()> {
         tracing::info!("Starting Gnapsis MCP server");
 
+        // Load configuration
         let config = Config::load()?;
-        let ctx = Context::from(config).await?;
+        tracing::debug!(
+            "Loaded configuration for project: {:?}",
+            config.project.name
+        );
+
+        // Connect to Neo4j
+        tracing::debug!("Connecting to Neo4j at {}", config.neo4j.uri);
+        let graph = Graph::new(
+            &config.neo4j.uri,
+            &config.neo4j.user,
+            config.neo4j.password.as_deref().unwrap_or(""),
+        )
+        .await?;
+        tracing::debug!("Connected to Neo4j");
+
+        // Initialize embedding provider
+        tracing::debug!(
+            "Initializing embedding provider: {}",
+            config.embedding.model
+        );
+        let embedder = Self::create_embedder(&config)?;
+        tracing::debug!("Embedding provider initialized");
+
+        // Create context and server
+        let ctx = Context::new(graph, config, embedder);
         let server = McpServer::new(ctx);
 
+        // Serve with stdio transport
         let service = server.serve(rmcp::transport::stdio()).await.map_err(|e| {
             tracing::error!(error = %e, "Failed to start MCP server");
             color_eyre::eyre::eyre!("Failed to start MCP server: {}", e)
@@ -32,5 +61,28 @@ impl App {
 
         tracing::info!("MCP server shutting down");
         Ok(())
+    }
+
+    /// Create the embedding provider based on configuration.
+    fn create_embedder(config: &Config) -> Result<Embedder<FastEmbedProvider>> {
+        let model = match config.embedding.model.as_str() {
+            "BAAI/bge-small-en-v1.5" | "bge-small-en-v1.5" => FastEmbedModel::BGESmallENV15,
+            "BAAI/bge-base-en-v1.5" | "bge-base-en-v1.5" => FastEmbedModel::BGEBaseENV15,
+            "BAAI/bge-large-en-v1.5" | "bge-large-en-v1.5" => FastEmbedModel::BGELargeENV15,
+            "all-MiniLM-L6-v2" => FastEmbedModel::AllMiniLML6V2,
+            "all-MiniLM-L12-v2" => FastEmbedModel::AllMiniLML12V2,
+            "nomic-embed-text-v1" => FastEmbedModel::NomicEmbedTextV1,
+            "nomic-embed-text-v1.5" => FastEmbedModel::NomicEmbedTextV15,
+            _ => FastEmbedModel::BGESmallENV15, // Default fallback
+        };
+
+        let provider_config = ProviderConfig::FastEmbed(FastEmbedConfig {
+            model,
+            show_download_progress: false,
+            cache_dir: None,
+        });
+
+        let provider = FastEmbedProvider::new(provider_config)?;
+        Ok(Embedder::new(provider))
     }
 }

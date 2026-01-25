@@ -17,19 +17,10 @@ di-macros = { path = "di-macros" }
 clap = { version = "4", features = ["derive"] }
 
 # MCP protocol
-rmcp = { version = "0.9", features = [
-    "server",
-    "macros",
-    "transport-io",                      # stdio (local)
-    "transport-streamable-http-server",  # HTTP (remote)
-] }
+rmcp = { version = "0.9", features = ["server", "macros", "transport-io"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-
-# HTTP server
-axum = "0.8"
-tower = "0.5"
 
 # JSON handling
 serde = { version = "1", features = ["derive"] }
