@@ -99,3 +99,7 @@ tempfile = "3"
 # msgpack for Neovim RPC
 rmpv = "1"
 
+# JWT validation for OAuth
+jsonwebtoken = "9"
+reqwest = { version = "0.12", features = ["json"] }
+

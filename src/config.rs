@@ -108,8 +108,14 @@ pub struct ProjectConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ServerConfig {
     /// API key for authentication (Bearer token).
-    /// Can also be set via GNAPSIS_SERVER_API_KEY env var.
+    /// Can also be set via GNAPSIS_SERVER__API_KEY env var.
     pub api_key: Option<String>,
+    /// OAuth 2.0 authorization server URL (e.g., WorkOS).
+    /// Set via GNAPSIS_SERVER__OAUTH_AUTHORIZATION_SERVER env var.
+    pub oauth_authorization_server: Option<String>,
+    /// Public URL of this resource server.
+    /// Set via GNAPSIS_SERVER__RESOURCE_URL env var.
+    pub resource_url: Option<String>,
 }
 
 impl Config {
@@ -123,7 +129,8 @@ impl Config {
             // Layer 2: Project config
             .merge(Toml::file(".gnapsis.toml"))
             // Layer 3: Environment variables (highest priority)
-            .merge(Env::prefixed("GNAPSIS_").split("_"))
+            // Use double underscore for nesting (e.g., GNAPSIS_SERVER__API_KEY -> server.api_key)
+            .merge(Env::prefixed("GNAPSIS_").map(|key| key.as_str().replace("__", ".").into()))
             .extract()
             .map_err(ConfigError::from)
     }

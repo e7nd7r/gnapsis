@@ -1,0 +1,37 @@
+# Build artifacts
+target/
+*.rs.bk
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Local config (secrets)
+.env
+*.pem
+*.key
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Test and dev files
+tests/
+.github/
+.nvim/
+
+# Misc
+.DS_Store
+*.log
