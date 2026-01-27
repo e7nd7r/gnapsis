@@ -5,7 +5,15 @@ members = ["di-macros"]
 name = "gnapsis"
 version = "0.1.0"
 edition = "2021"
-description = "Code intelligence graph - MCP server for knowledge management with Neo4j"
+description = "Code intelligence graph - MCP server for knowledge management"
+
+[features]
+default = []
+integration = []  # Enable integration tests (requires running database)
+
+[lib]
+name = "gnapsis"
+path = "src/lib.rs"
 
 [[bin]]
 name = "gnapsis"
@@ -51,6 +59,7 @@ raggy = { git = "https://github.com/e7nd7r/raggy", features = ["fastembed"] }
 
 # Async utilities
 futures = "0.3"
+async-stream = "0.3"
 
 # Lazy initialization
 once_cell = "1"
@@ -60,6 +69,11 @@ thiserror = "1"
 
 # Async trait support
 async-trait = "0.1"
+
+# PostgreSQL + Apache AGE backend
+deadpool-postgres = "0.14"
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+bytes = "1"  # For agtype binary serialization
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
@@ -89,4 +103,11 @@ tempfile = "3"
 
 # msgpack for Neovim RPC
 rmpv = "1"
+
+# Parser for Cypher RETURN clause extraction
+pest = "2"
+pest_derive = "2"
+
+[dev-dependencies]
+serial_test = "3.3.1"
 

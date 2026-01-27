@@ -1,28 +1,10 @@
 //! Gnapsis - Code Intelligence Graph MCP Server
 
-pub mod cli;
-pub mod config;
-pub mod context;
-pub mod di;
-pub mod error;
-pub mod git;
-pub mod graph;
-pub mod mcp;
-pub mod migrations;
-pub mod models;
-pub mod nvim;
-pub mod repositories;
-pub mod services;
-pub mod visualization;
-
-// Re-export FromRef at crate root for di-macros generated code
-pub use di::FromRef;
-
 use clap::Parser;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::cli::App;
+use gnapsis::cli::App;
 
 /// Get the log directory path (~/.gnapsis/logs).
 fn log_dir() -> Option<std::path::PathBuf> {
