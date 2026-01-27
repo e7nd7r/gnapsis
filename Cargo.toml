@@ -108,3 +108,6 @@ rmpv = "1"
 pest = "2"
 pest_derive = "2"
 
+[dev-dependencies]
+serial_test = "3.3.1"
+
