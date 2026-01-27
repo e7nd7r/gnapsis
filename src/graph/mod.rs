@@ -13,12 +13,21 @@
 //! - [`Transaction`] - Transaction lifecycle (commit/rollback)
 //! - [`GraphClient`] - Connection management and transaction creation
 //!
+//! # Available Backends
+//!
+//! - [`backends::postgres::PostgresClient`] - PostgreSQL + Apache AGE
+//!
 //! # Usage
 //!
 //! ```ignore
-//! use gnapsis::graph::{Graph, GraphClient, QueryExt};
+//! use gnapsis::graph::{Graph, QueryExt};
+//! use gnapsis::graph::backends::postgres::PostgresClient;
 //!
-//! // Create a graph instance with any backend
+//! // Connect to PostgreSQL + AGE
+//! let client = PostgresClient::connect(
+//!     "postgresql://user:pass@localhost/mydb",
+//!     "my_graph"
+//! ).await?;
 //! let graph = Graph::new(client);
 //!
 //! // Simple query
@@ -40,6 +49,7 @@
 //!     .await?;
 //! ```
 
+mod cypher;
 mod macros;
 mod query;
 mod row;
@@ -49,8 +59,11 @@ pub mod backends;
 
 // Re-export core types
 pub use query::{Query, QueryExt};
-pub use row::{Params, Row, RowStream};
+pub use row::{Node, Params, Path, PathElement, Relation, Row, RowStream};
 pub use traits::{CypherExecutor, GraphClient, SqlExecutor, Transaction};
+
+// Cypher parser for RETURN clause extraction
+pub use cypher::{extract_return_columns, ParseError};
 
 // Re-export macro (defined at crate root via #[macro_export])
 #[doc(inline)]

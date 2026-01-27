@@ -1,0 +1,471 @@
+// Cypher Grammar for Pest
+// Converted from openCypher ANTLR4 grammar
+// Licensed under Apache License 2.0
+
+// =============================================================================
+// Entry Point
+// =============================================================================
+
+Cypher = { SOI ~ SP? ~ Statement ~ (SP? ~ ";")? ~ SP? ~ EOI }
+
+Statement = { Query }
+
+Query = { RegularQuery | StandaloneCall }
+
+RegularQuery = { SingleQuery ~ (SP? ~ Union)* }
+
+Union = {
+    (UNION ~ SP ~ ALL ~ SP? ~ SingleQuery)
+    | (UNION ~ SP? ~ SingleQuery)
+}
+
+SingleQuery = { SinglePartQuery | MultiPartQuery }
+
+SinglePartQuery = {
+    ((ReadingClause ~ SP?)* ~ Return)
+    | ((ReadingClause ~ SP?)* ~ UpdatingClause ~ (SP? ~ UpdatingClause)* ~ (SP? ~ Return)?)
+}
+
+MultiPartQuery = {
+    ((ReadingClause ~ SP?)* ~ (UpdatingClause ~ SP?)* ~ With ~ SP?)+ ~ SinglePartQuery
+}
+
+// =============================================================================
+// Clauses
+// =============================================================================
+
+UpdatingClause = { Create | Merge | Delete | Set | Remove }
+
+ReadingClause = { Match | Unwind | InQueryCall }
+
+Match = { OPTIONAL? ~ MATCH ~ Pattern ~ Where? }
+
+Unwind = { UNWIND ~ Expression ~ AS ~ Variable }
+
+Merge = { MERGE ~ SP? ~ PatternPart ~ (SP ~ MergeAction)* }
+
+MergeAction = {
+    (ON ~ SP ~ MATCH ~ SP ~ Set)
+    | (ON ~ SP ~ CREATE ~ SP ~ Set)
+}
+
+Create = { CREATE ~ SP? ~ Pattern }
+
+Set = { SET ~ SP? ~ SetItem ~ ("," ~ SetItem)* }
+
+SetItem = {
+    (PropertyExpression ~ SP? ~ "=" ~ SP? ~ Expression)
+    | (Variable ~ SP? ~ "=" ~ SP? ~ Expression)
+    | (Variable ~ SP? ~ "+=" ~ SP? ~ Expression)
+    | (Variable ~ SP? ~ NodeLabels)
+}
+
+Delete = { (DETACH ~ SP)? ~ DELETE ~ SP? ~ Expression ~ (SP? ~ "," ~ SP? ~ Expression)* }
+
+Remove = { REMOVE ~ SP ~ RemoveItem ~ (SP? ~ "," ~ SP? ~ RemoveItem)* }
+
+RemoveItem = { (Variable ~ NodeLabels) | PropertyExpression }
+
+InQueryCall = { CALL ~ SP ~ ExplicitProcedureInvocation ~ (SP? ~ YIELD ~ SP ~ YieldItems)? }
+
+StandaloneCall = {
+    CALL ~ SP ~ (ExplicitProcedureInvocation | ImplicitProcedureInvocation) ~ (SP ~ YIELD ~ SP ~ YieldItems)?
+}
+
+YieldItems = { ("*" | (YieldItem ~ (SP? ~ "," ~ SP? ~ YieldItem)*)) ~ (SP? ~ Where)? }
+
+YieldItem = { (ProcedureResultField ~ SP ~ AS ~ SP)? ~ Variable }
+
+// =============================================================================
+// WITH and RETURN
+// =============================================================================
+
+With = { WITH ~ ProjectionBody ~ (SP? ~ Where)? }
+
+Return = { RETURN ~ ProjectionBody }
+
+ProjectionBody = {
+    DISTINCT? ~ ProjectionItems ~ Order? ~ Skip? ~ Limit?
+}
+
+ProjectionItems = {
+    ("*" ~ (SP? ~ "," ~ SP? ~ ProjectionItem)*)
+    | (ProjectionItem ~ (SP? ~ "," ~ SP? ~ ProjectionItem)*)
+}
+
+ProjectionItem = {
+    (Expression ~ AS ~ Variable)
+    | Expression
+}
+
+Order = { ORDER ~ BY ~ SortItem ~ ("," ~ SortItem)* }
+
+Skip = { SKIP_KW ~ Expression }
+
+Limit = { LIMIT ~ Expression }
+
+SortItem = { Expression ~ (ASCENDING | ASC | DESCENDING | DESC)? }
+
+Where = { WHERE ~ Expression }
+
+// =============================================================================
+// Patterns
+// =============================================================================
+
+Pattern = { PatternPart ~ (SP? ~ "," ~ SP? ~ PatternPart)* }
+
+PatternPart = {
+    (Variable ~ SP? ~ "=" ~ SP? ~ AnonymousPatternPart)
+    | AnonymousPatternPart
+}
+
+AnonymousPatternPart = { PatternElement }
+
+PatternElement = {
+    (NodePattern ~ (SP? ~ PatternElementChain)*)
+    | ("(" ~ PatternElement ~ ")")
+}
+
+NodePattern = {
+    "(" ~ SP? ~ (Variable ~ SP?)? ~ (NodeLabels ~ SP?)? ~ (Properties ~ SP?)? ~ ")"
+}
+
+PatternElementChain = { RelationshipPattern ~ SP? ~ NodePattern }
+
+RelationshipPattern = {
+    (LeftArrowHead ~ SP? ~ Dash ~ SP? ~ RelationshipDetail? ~ SP? ~ Dash ~ SP? ~ RightArrowHead)
+    | (LeftArrowHead ~ SP? ~ Dash ~ SP? ~ RelationshipDetail? ~ SP? ~ Dash)
+    | (Dash ~ SP? ~ RelationshipDetail? ~ SP? ~ Dash ~ SP? ~ RightArrowHead)
+    | (Dash ~ SP? ~ RelationshipDetail? ~ SP? ~ Dash)
+}
+
+RelationshipDetail = {
+    "[" ~ SP? ~ (Variable ~ SP?)? ~ (RelationshipTypes ~ SP?)? ~ RangeLiteral? ~ (Properties ~ SP?)? ~ "]"
+}
+
+Properties = { MapLiteral | Parameter }
+
+RelationshipTypes = { ":" ~ SP? ~ RelTypeName ~ (SP? ~ "|" ~ ":"? ~ SP? ~ RelTypeName)* }
+
+NodeLabels = { NodeLabel ~ (SP? ~ NodeLabel)* }
+
+NodeLabel = { ":" ~ SP? ~ LabelName }
+
+RangeLiteral = { "*" ~ SP? ~ (IntegerLiteral ~ SP?)? ~ (".." ~ SP? ~ (IntegerLiteral ~ SP?)?)? }
+
+LabelName = { SchemaName }
+
+RelTypeName = { SchemaName }
+
+// =============================================================================
+// Expressions
+// =============================================================================
+
+Expression = { OrExpression }
+
+OrExpression = { XorExpression ~ (SP ~ OR ~ SP ~ XorExpression)* }
+
+XorExpression = { AndExpression ~ (SP ~ XOR ~ SP ~ AndExpression)* }
+
+AndExpression = { NotExpression ~ (SP ~ AND ~ SP ~ NotExpression)* }
+
+NotExpression = { (NOT ~ SP?)* ~ ComparisonExpression }
+
+ComparisonExpression = { AddOrSubtractExpression ~ (SP? ~ PartialComparisonExpression)* }
+
+AddOrSubtractExpression = {
+    MultiplyDivideModuloExpression ~ ((SP? ~ "+" ~ SP? ~ MultiplyDivideModuloExpression) | (SP? ~ "-" ~ SP? ~ MultiplyDivideModuloExpression))*
+}
+
+MultiplyDivideModuloExpression = {
+    PowerOfExpression ~ ((SP? ~ "*" ~ SP? ~ PowerOfExpression) | (SP? ~ "/" ~ SP? ~ PowerOfExpression) | (SP? ~ "%" ~ SP? ~ PowerOfExpression))*
+}
+
+PowerOfExpression = { UnaryAddOrSubtractExpression ~ (SP? ~ "^" ~ SP? ~ UnaryAddOrSubtractExpression)* }
+
+UnaryAddOrSubtractExpression = { (("+"|"-") ~ SP?)* ~ StringListNullOperatorExpression }
+
+StringListNullOperatorExpression = {
+    PropertyOrLabelsExpression ~ (StringOperatorExpression | ListOperatorExpression | NullOperatorExpression)*
+}
+
+ListOperatorExpression = {
+    (IN ~ PropertyOrLabelsExpression)
+    | ("[" ~ Expression ~ "]")
+    | ("[" ~ Expression? ~ ".." ~ Expression? ~ "]")
+}
+
+StringOperatorExpression = {
+    ((STARTS ~ WITH) | (ENDS ~ WITH) | CONTAINS) ~ PropertyOrLabelsExpression
+}
+
+NullOperatorExpression = {
+    (IS ~ NULL_KW)
+    | (IS ~ NOT ~ NULL_KW)
+}
+
+PropertyOrLabelsExpression = { Atom ~ (SP? ~ PropertyLookup)* ~ (SP? ~ NodeLabels)? }
+
+Atom = {
+    Literal
+    | Parameter
+    | CaseExpression
+    | (COUNT ~ SP? ~ "(" ~ SP? ~ "*" ~ SP? ~ ")")
+    | ListComprehension
+    | PatternComprehension
+    | (ALL ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | (ANY_KW ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | (NONE ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | (SINGLE ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | RelationshipsPattern
+    | ParenthesizedExpression
+    | FunctionInvocation
+    | Variable
+}
+
+Literal = {
+    NumberLiteral
+    | StringLiteral
+    | BooleanLiteral
+    | NULL_KW
+    | MapLiteral
+    | ListLiteral
+}
+
+BooleanLiteral = { TRUE | FALSE }
+
+ListLiteral = { "[" ~ SP? ~ (Expression ~ SP? ~ ("," ~ SP? ~ Expression ~ SP?)*)? ~ "]" }
+
+PartialComparisonExpression = {
+    ("=" ~ SP? ~ AddOrSubtractExpression)
+    | ("<>" ~ SP? ~ AddOrSubtractExpression)
+    | ("<" ~ SP? ~ AddOrSubtractExpression)
+    | (">" ~ SP? ~ AddOrSubtractExpression)
+    | ("<=" ~ SP? ~ AddOrSubtractExpression)
+    | (">=" ~ SP? ~ AddOrSubtractExpression)
+}
+
+ParenthesizedExpression = { "(" ~ SP? ~ Expression ~ SP? ~ ")" }
+
+RelationshipsPattern = { NodePattern ~ (SP? ~ PatternElementChain)+ }
+
+FilterExpression = { IdInColl ~ (SP? ~ Where)? }
+
+IdInColl = { Variable ~ SP ~ IN ~ SP ~ Expression }
+
+FunctionInvocation = {
+    FunctionName ~ SP? ~ "(" ~ SP? ~ (DISTINCT ~ SP?)? ~ (Expression ~ SP? ~ ("," ~ SP? ~ Expression ~ SP?)*)? ~ ")"
+}
+
+FunctionName = { (Namespace ~ SymbolicName) | EXISTS }
+
+ExplicitProcedureInvocation = {
+    ProcedureName ~ SP? ~ "(" ~ SP? ~ (Expression ~ SP? ~ ("," ~ SP? ~ Expression ~ SP?)*)? ~ ")"
+}
+
+ImplicitProcedureInvocation = { ProcedureName }
+
+ProcedureResultField = { SymbolicName }
+
+ProcedureName = { Namespace ~ SymbolicName }
+
+Namespace = { (SymbolicName ~ ".")* }
+
+ListComprehension = { "[" ~ SP? ~ FilterExpression ~ (SP? ~ "|" ~ SP? ~ Expression)? ~ SP? ~ "]" }
+
+PatternComprehension = {
+    "[" ~ SP? ~ (Variable ~ SP? ~ "=" ~ SP?)? ~ RelationshipsPattern ~ SP? ~ (WHERE ~ SP? ~ Expression ~ SP?)? ~ "|" ~ SP? ~ Expression ~ SP? ~ "]"
+}
+
+PropertyLookup = { "." ~ SP? ~ PropertyKeyName }
+
+CaseExpression = {
+    ((CASE ~ (SP? ~ CaseAlternatives)+) | (CASE ~ SP? ~ Expression ~ (SP? ~ CaseAlternatives)+)) ~ (SP? ~ ELSE ~ SP? ~ Expression)? ~ SP? ~ END
+}
+
+CaseAlternatives = { WHEN ~ SP? ~ Expression ~ SP? ~ THEN ~ SP? ~ Expression }
+
+Variable = { SymbolicName }
+
+// =============================================================================
+// Literals
+// =============================================================================
+
+StringLiteral = @{
+    ("\"" ~ (StringLiteral_double | EscapedChar)* ~ "\"")
+    | ("'" ~ (StringLiteral_single | EscapedChar)* ~ "'")
+}
+
+StringLiteral_double = { (!("\"" | "\\") ~ ANY)+ }
+StringLiteral_single = { (!("'" | "\\") ~ ANY)+ }
+
+EscapedChar = @{
+    "\\" ~ ("\\" | "'" | "\"" | "b" | "B" | "f" | "F" | "n" | "N" | "r" | "R" | "t" | "T" | UnicodeEscape)
+}
+
+UnicodeEscape = {
+    ("u" | "U") ~ HexDigit ~ HexDigit ~ HexDigit ~ HexDigit ~ (HexDigit ~ HexDigit ~ HexDigit ~ HexDigit)?
+}
+
+NumberLiteral = { DoubleLiteral | IntegerLiteral }
+
+MapLiteral = {
+    "{" ~ SP? ~ (PropertyKeyName ~ SP? ~ ":" ~ SP? ~ Expression ~ SP? ~ ("," ~ SP? ~ PropertyKeyName ~ SP? ~ ":" ~ SP? ~ Expression ~ SP?)*)? ~ "}"
+}
+
+Parameter = { "$" ~ (SymbolicName | DecimalInteger) }
+
+PropertyExpression = { Atom ~ (SP? ~ PropertyLookup)+ }
+
+PropertyKeyName = { SchemaName }
+
+IntegerLiteral = @{ HexInteger | OctalInteger | DecimalInteger }
+
+HexInteger = @{ "0x" ~ HexDigit+ }
+
+DecimalInteger = @{ "0" | (NonZeroDigit ~ Digit*) }
+
+OctalInteger = @{ "0" ~ OctDigit+ }
+
+HexDigit = { Digit | HexLetter }
+
+HexLetter = { 'A'..'F' | 'a'..'f' }
+
+Digit = { '0'..'9' }
+
+NonZeroDigit = { '1'..'9' }
+
+OctDigit = { '0'..'7' }
+
+DoubleLiteral = @{ ExponentDecimalReal | RegularDecimalReal }
+
+ExponentDecimalReal = @{
+    (Digit+ | (Digit+ ~ "." ~ Digit+) | ("." ~ Digit+)) ~ ("E" | "e") ~ "-"? ~ Digit+
+}
+
+RegularDecimalReal = @{ Digit* ~ "." ~ Digit+ }
+
+// =============================================================================
+// Names and Identifiers
+// =============================================================================
+
+SchemaName = { SymbolicName | ReservedWord }
+
+SymbolicName = @{
+    UnescapedSymbolicName
+    | EscapedSymbolicName
+    | COUNT
+    | FILTER
+    | EXTRACT
+    | ANY_KW
+    | NONE
+    | SINGLE
+}
+
+UnescapedSymbolicName = @{ IdentifierStart ~ IdentifierPart* }
+
+IdentifierStart = { LETTER | "_" }
+
+IdentifierPart = { LETTER | Digit | "_" }
+
+LETTER = { 'A'..'Z' | 'a'..'z' | '\u{0080}'..'\u{FFFF}' }
+
+EscapedSymbolicName = @{ ("`" ~ EscapedSymbolicName_inner* ~ "`")+ }
+
+EscapedSymbolicName_inner = { !"`" ~ ANY }
+
+// =============================================================================
+// Keywords (case-insensitive)
+// =============================================================================
+
+ALL = @{ ^"all" ~ !IdentifierPart }
+AND = @{ ^"and" ~ !IdentifierPart }
+ANY_KW = @{ ^"any" ~ !IdentifierPart }
+AS = @{ ^"as" ~ !IdentifierPart }
+ASC = @{ ^"asc" ~ !IdentifierPart }
+ASCENDING = @{ ^"ascending" ~ !IdentifierPart }
+BY = @{ ^"by" ~ !IdentifierPart }
+CALL = @{ ^"call" ~ !IdentifierPart }
+CASE = @{ ^"case" ~ !IdentifierPart }
+CONTAINS = @{ ^"contains" ~ !IdentifierPart }
+COUNT = @{ ^"count" ~ !IdentifierPart }
+CREATE = @{ ^"create" ~ !IdentifierPart }
+DELETE = @{ ^"delete" ~ !IdentifierPart }
+DESC = @{ ^"desc" ~ !IdentifierPart }
+DESCENDING = @{ ^"descending" ~ !IdentifierPart }
+DETACH = @{ ^"detach" ~ !IdentifierPart }
+DISTINCT = @{ ^"distinct" ~ !IdentifierPart }
+ELSE = @{ ^"else" ~ !IdentifierPart }
+END = @{ ^"end" ~ !IdentifierPart }
+ENDS = @{ ^"ends" ~ !IdentifierPart }
+EXISTS = @{ ^"exists" ~ !IdentifierPart }
+EXTRACT = @{ ^"extract" ~ !IdentifierPart }
+FALSE = @{ ^"false" ~ !IdentifierPart }
+FILTER = @{ ^"filter" ~ !IdentifierPart }
+IN = @{ ^"in" ~ !IdentifierPart }
+IS = @{ ^"is" ~ !IdentifierPart }
+LIMIT = @{ ^"limit" ~ !IdentifierPart }
+MATCH = @{ ^"match" ~ !IdentifierPart }
+MERGE = @{ ^"merge" ~ !IdentifierPart }
+NONE = @{ ^"none" ~ !IdentifierPart }
+NOT = @{ ^"not" ~ !IdentifierPart }
+NULL_KW = @{ ^"null" ~ !IdentifierPart }
+ON = @{ ^"on" ~ !IdentifierPart }
+OPTIONAL = @{ ^"optional" ~ !IdentifierPart }
+OR = @{ ^"or" ~ !IdentifierPart }
+ORDER = @{ ^"order" ~ !IdentifierPart }
+REMOVE = @{ ^"remove" ~ !IdentifierPart }
+RETURN = @{ ^"return" ~ !IdentifierPart }
+SET = @{ ^"set" ~ !IdentifierPart }
+SINGLE = @{ ^"single" ~ !IdentifierPart }
+SKIP_KW = @{ ^"skip" ~ !IdentifierPart }
+STARTS = @{ ^"starts" ~ !IdentifierPart }
+THEN = @{ ^"then" ~ !IdentifierPart }
+TRUE = @{ ^"true" ~ !IdentifierPart }
+UNION = @{ ^"union" ~ !IdentifierPart }
+UNWIND = @{ ^"unwind" ~ !IdentifierPart }
+WHEN = @{ ^"when" ~ !IdentifierPart }
+WHERE = @{ ^"where" ~ !IdentifierPart }
+WITH = @{ ^"with" ~ !IdentifierPart }
+XOR = @{ ^"xor" ~ !IdentifierPart }
+YIELD = @{ ^"yield" ~ !IdentifierPart }
+
+// Reserved words that can be used as identifiers in some contexts
+ReservedWord = {
+    ALL | ASC | ASCENDING | BY | CREATE | DELETE | DESC | DESCENDING
+    | DETACH | EXISTS | LIMIT | MATCH | MERGE | ON | OPTIONAL | ORDER
+    | REMOVE | RETURN | SET | SKIP_KW | WHERE | WITH | UNION | UNWIND
+    | AND | AS | CONTAINS | DISTINCT | ENDS | IN | IS | NOT | OR
+    | STARTS | XOR | FALSE | TRUE | NULL_KW | CASE | WHEN | THEN | ELSE | END
+}
+
+// =============================================================================
+// Symbols
+// =============================================================================
+
+LeftArrowHead = { "<" | "\u{27e8}" | "\u{3008}" | "\u{fe64}" | "\u{ff1c}" }
+
+RightArrowHead = { ">" | "\u{27e9}" | "\u{3009}" | "\u{fe65}" | "\u{ff1e}" }
+
+Dash = {
+    "-" | "\u{00ad}" | "\u{2010}" | "\u{2011}" | "\u{2012}" | "\u{2013}"
+    | "\u{2014}" | "\u{2015}" | "\u{2212}" | "\u{fe58}" | "\u{fe63}" | "\u{ff0d}"
+}
+
+// =============================================================================
+// Whitespace and Comments
+// =============================================================================
+
+SP = _{ (WHITESPACE | Comment)+ }
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\u{000B}" | "\u{000C}" | "\u{00A0}" | "\u{1680}"
+    | "\u{2000}" | "\u{2001}" | "\u{2002}" | "\u{2003}" | "\u{2004}" | "\u{2005}"
+    | "\u{2006}" | "\u{2007}" | "\u{2008}" | "\u{2009}" | "\u{200A}" | "\u{2028}"
+    | "\u{2029}" | "\u{202F}" | "\u{205F}" | "\u{3000}" }
+
+Comment = _{
+    ("/*" ~ (!"*/" ~ ANY)* ~ "*/")
+    | ("//" ~ (!NEWLINE ~ ANY)*)
+}
+
+NEWLINE = _{ "\n" | "\r\n" | "\r" }

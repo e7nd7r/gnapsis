@@ -11,7 +11,7 @@
 //!
 //! | Backend | Module | Status |
 //! |---------|--------|--------|
-//! | PostgreSQL + Apache AGE | `postgres` | Planned (EPIC004-F2) |
+//! | PostgreSQL + Apache AGE | [`postgres`] | Available |
 //! | SQLite + graphqlite | `sqlite` | Future |
 //!
 //! # Implementing a Backend
@@ -25,5 +25,6 @@
 //! 5. Implement `GraphClient` for the client struct
 //! 6. Optionally implement `SqlExecutor` if the backend supports SQL
 
-// Future: mod postgres;
+pub mod postgres;
+
 // Future: mod sqlite;
