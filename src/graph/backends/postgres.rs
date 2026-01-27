@@ -298,9 +298,23 @@ async fn execute_pg_cypher<'a>(
         Some(param) => conn.query_raw(&sql, std::iter::once(param)).await,
     };
 
-    let stream = stream.map_err(|e| AppError::Query {
-        message: format!("Cypher query failed: {}", e),
-        query: cypher.to_string(),
+    let stream = stream.map_err(|e| {
+        // Extract detailed error message from PostgreSQL
+        let detail = e
+            .as_db_error()
+            .map(|db_err| {
+                format!(
+                    "{}: {} ({})",
+                    db_err.severity(),
+                    db_err.message(),
+                    db_err.code().code()
+                )
+            })
+            .unwrap_or_else(|| e.to_string());
+        AppError::Query {
+            message: format!("Cypher query failed: {}", detail),
+            query: cypher.to_string(),
+        }
     })?;
 
     Ok(Box::pin(stream.map_ok(|row| parse_pg_row(&row)).map_err(
@@ -332,9 +346,23 @@ fn execute_pg_cypher_owned(
             Some(param) => conn.query_raw(&sql, std::iter::once(param)).await,
         };
 
-        let stream = stream.map_err(|e| AppError::Query {
-            message: format!("Cypher query failed: {}", e),
-            query: cypher.clone(),
+        let stream = stream.map_err(|e| {
+            // Extract detailed error message from PostgreSQL
+            let detail = e
+                .as_db_error()
+                .map(|db_err| {
+                    format!(
+                        "{}: {} ({})",
+                        db_err.severity(),
+                        db_err.message(),
+                        db_err.code().code()
+                    )
+                })
+                .unwrap_or_else(|| e.to_string());
+            AppError::Query {
+                message: format!("Cypher query failed: {}", detail),
+                query: cypher.clone(),
+            }
         })?;
 
         futures::pin_mut!(stream);
