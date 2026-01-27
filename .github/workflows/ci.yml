@@ -84,9 +84,7 @@ jobs:
           PGPASSWORD: postgres
         run: |
           psql -h localhost -U postgres -d gnapsis_dev -c "CREATE EXTENSION IF NOT EXISTS age;"
-          psql -h localhost -U postgres -d gnapsis_dev -c "LOAD 'age';"
-          psql -h localhost -U postgres -d gnapsis_dev -c "SET search_path = ag_catalog, '\$user', public;"
-          psql -h localhost -U postgres -d gnapsis_dev -c "SELECT create_graph('knowledge_graph');"
+          psql -h localhost -U postgres -d gnapsis_dev -c "SELECT ag_catalog.create_graph('knowledge_graph');"
 
       - name: Run integration tests
         run: cargo test --features integration --test postgres_integration
