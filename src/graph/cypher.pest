@@ -1,33 +1,38 @@
 // Cypher Grammar for Pest
 // Converted from openCypher ANTLR4 grammar
 // Licensed under Apache License 2.0
+//
+// NOTE: This grammar relies on pest's implicit whitespace handling.
+// The WHITESPACE rule is automatically inserted between elements of non-atomic rules.
+// Explicit SP/SP? is only needed inside brackets/parens where implicit whitespace doesn't apply.
 
 // =============================================================================
 // Entry Point
 // =============================================================================
 
-Cypher = { SOI ~ SP? ~ Statement ~ (SP? ~ ";")? ~ SP? ~ EOI }
+Cypher = { SOI ~ Statement ~ ";"? ~ EOI }
 
 Statement = { Query }
 
 Query = { RegularQuery | StandaloneCall }
 
-RegularQuery = { SingleQuery ~ (SP? ~ Union)* }
+RegularQuery = { SingleQuery ~ Union* }
 
+// Note: UNION ALL must come before UNION in PEG ordered choice
 Union = {
-    (UNION ~ SP ~ ALL ~ SP? ~ SingleQuery)
-    | (UNION ~ SP? ~ SingleQuery)
+    (UNION ~ ALL ~ SingleQuery)
+    | (UNION ~ SingleQuery)
 }
 
 SingleQuery = { SinglePartQuery | MultiPartQuery }
 
 SinglePartQuery = {
-    ((ReadingClause ~ SP?)* ~ Return)
-    | ((ReadingClause ~ SP?)* ~ UpdatingClause ~ (SP? ~ UpdatingClause)* ~ (SP? ~ Return)?)
+    (ReadingClause* ~ Return)
+    | (ReadingClause* ~ UpdatingClause+ ~ Return?)
 }
 
 MultiPartQuery = {
-    ((ReadingClause ~ SP?)* ~ (UpdatingClause ~ SP?)* ~ With ~ SP?)+ ~ SinglePartQuery
+    (ReadingClause* ~ UpdatingClause* ~ With)+ ~ SinglePartQuery
 }
 
 // =============================================================================
@@ -42,45 +47,45 @@ Match = { OPTIONAL? ~ MATCH ~ Pattern ~ Where? }
 
 Unwind = { UNWIND ~ Expression ~ AS ~ Variable }
 
-Merge = { MERGE ~ SP? ~ PatternPart ~ (SP ~ MergeAction)* }
+Merge = { MERGE ~ PatternPart ~ MergeAction* }
 
 MergeAction = {
-    (ON ~ SP ~ MATCH ~ SP ~ Set)
-    | (ON ~ SP ~ CREATE ~ SP ~ Set)
+    (ON ~ MATCH ~ Set)
+    | (ON ~ CREATE ~ Set)
 }
 
-Create = { CREATE ~ SP? ~ Pattern }
+Create = { CREATE ~ Pattern }
 
-Set = { SET ~ SP? ~ SetItem ~ ("," ~ SetItem)* }
+Set = { SET ~ SetItem ~ ("," ~ SetItem)* }
 
 SetItem = {
-    (PropertyExpression ~ SP? ~ "=" ~ SP? ~ Expression)
-    | (Variable ~ SP? ~ "=" ~ SP? ~ Expression)
-    | (Variable ~ SP? ~ "+=" ~ SP? ~ Expression)
-    | (Variable ~ SP? ~ NodeLabels)
+    (PropertyExpression ~ "=" ~ Expression)
+    | (Variable ~ "+=" ~ Expression)
+    | (Variable ~ "=" ~ Expression)
+    | (Variable ~ NodeLabels)
 }
 
-Delete = { (DETACH ~ SP)? ~ DELETE ~ SP? ~ Expression ~ (SP? ~ "," ~ SP? ~ Expression)* }
+Delete = { DETACH? ~ DELETE ~ Expression ~ ("," ~ Expression)* }
 
-Remove = { REMOVE ~ SP ~ RemoveItem ~ (SP? ~ "," ~ SP? ~ RemoveItem)* }
+Remove = { REMOVE ~ RemoveItem ~ ("," ~ RemoveItem)* }
 
 RemoveItem = { (Variable ~ NodeLabels) | PropertyExpression }
 
-InQueryCall = { CALL ~ SP ~ ExplicitProcedureInvocation ~ (SP? ~ YIELD ~ SP ~ YieldItems)? }
+InQueryCall = { CALL ~ ExplicitProcedureInvocation ~ (YIELD ~ YieldItems)? }
 
 StandaloneCall = {
-    CALL ~ SP ~ (ExplicitProcedureInvocation | ImplicitProcedureInvocation) ~ (SP ~ YIELD ~ SP ~ YieldItems)?
+    CALL ~ (ExplicitProcedureInvocation | ImplicitProcedureInvocation) ~ (YIELD ~ YieldItems)?
 }
 
-YieldItems = { ("*" | (YieldItem ~ (SP? ~ "," ~ SP? ~ YieldItem)*)) ~ (SP? ~ Where)? }
+YieldItems = { ("*" | (YieldItem ~ ("," ~ YieldItem)*)) ~ Where? }
 
-YieldItem = { (ProcedureResultField ~ SP ~ AS ~ SP)? ~ Variable }
+YieldItem = { (ProcedureResultField ~ AS)? ~ Variable }
 
 // =============================================================================
 // WITH and RETURN
 // =============================================================================
 
-With = { WITH ~ ProjectionBody ~ (SP? ~ Where)? }
+With = { WITH ~ ProjectionBody ~ Where? }
 
 Return = { RETURN ~ ProjectionBody }
 
@@ -89,8 +94,8 @@ ProjectionBody = {
 }
 
 ProjectionItems = {
-    ("*" ~ (SP? ~ "," ~ SP? ~ ProjectionItem)*)
-    | (ProjectionItem ~ (SP? ~ "," ~ SP? ~ ProjectionItem)*)
+    ("*" ~ ("," ~ ProjectionItem)*)
+    | (ProjectionItem ~ ("," ~ ProjectionItem)*)
 }
 
 ProjectionItem = {
@@ -112,25 +117,26 @@ Where = { WHERE ~ Expression }
 // Patterns
 // =============================================================================
 
-Pattern = { PatternPart ~ (SP? ~ "," ~ SP? ~ PatternPart)* }
+Pattern = { PatternPart ~ ("," ~ PatternPart)* }
 
 PatternPart = {
-    (Variable ~ SP? ~ "=" ~ SP? ~ AnonymousPatternPart)
+    (Variable ~ "=" ~ AnonymousPatternPart)
     | AnonymousPatternPart
 }
 
 AnonymousPatternPart = { PatternElement }
 
 PatternElement = {
-    (NodePattern ~ (SP? ~ PatternElementChain)*)
+    (NodePattern ~ PatternElementChain*)
     | ("(" ~ PatternElement ~ ")")
 }
 
+// Inside parens/brackets we need explicit SP? since implicit whitespace doesn't apply
 NodePattern = {
     "(" ~ SP? ~ (Variable ~ SP?)? ~ (NodeLabels ~ SP?)? ~ (Properties ~ SP?)? ~ ")"
 }
 
-PatternElementChain = { RelationshipPattern ~ SP? ~ NodePattern }
+PatternElementChain = { RelationshipPattern ~ NodePattern }
 
 RelationshipPattern = {
     (LeftArrowHead ~ SP? ~ Dash ~ SP? ~ RelationshipDetail? ~ SP? ~ Dash ~ SP? ~ RightArrowHead)
@@ -147,7 +153,7 @@ Properties = { MapLiteral | Parameter }
 
 RelationshipTypes = { ":" ~ SP? ~ RelTypeName ~ (SP? ~ "|" ~ ":"? ~ SP? ~ RelTypeName)* }
 
-NodeLabels = { NodeLabel ~ (SP? ~ NodeLabel)* }
+NodeLabels = { NodeLabel+ }
 
 NodeLabel = { ":" ~ SP? ~ LabelName }
 
@@ -163,36 +169,38 @@ RelTypeName = { SchemaName }
 
 Expression = { OrExpression }
 
-OrExpression = { XorExpression ~ (SP ~ OR ~ SP ~ XorExpression)* }
+// Boolean operators - rely on implicit whitespace between keywords
+OrExpression = { XorExpression ~ (OR ~ XorExpression)* }
 
-XorExpression = { AndExpression ~ (SP ~ XOR ~ SP ~ AndExpression)* }
+XorExpression = { AndExpression ~ (XOR ~ AndExpression)* }
 
-AndExpression = { NotExpression ~ (SP ~ AND ~ SP ~ NotExpression)* }
+AndExpression = { NotExpression ~ (AND ~ NotExpression)* }
 
-NotExpression = { (NOT ~ SP?)* ~ ComparisonExpression }
+NotExpression = { NOT* ~ ComparisonExpression }
 
-ComparisonExpression = { AddOrSubtractExpression ~ (SP? ~ PartialComparisonExpression)* }
+ComparisonExpression = { AddOrSubtractExpression ~ PartialComparisonExpression* }
 
 AddOrSubtractExpression = {
-    MultiplyDivideModuloExpression ~ ((SP? ~ "+" ~ SP? ~ MultiplyDivideModuloExpression) | (SP? ~ "-" ~ SP? ~ MultiplyDivideModuloExpression))*
+    MultiplyDivideModuloExpression ~ (("+" ~ MultiplyDivideModuloExpression) | ("-" ~ MultiplyDivideModuloExpression))*
 }
 
 MultiplyDivideModuloExpression = {
-    PowerOfExpression ~ ((SP? ~ "*" ~ SP? ~ PowerOfExpression) | (SP? ~ "/" ~ SP? ~ PowerOfExpression) | (SP? ~ "%" ~ SP? ~ PowerOfExpression))*
+    PowerOfExpression ~ (("*" ~ PowerOfExpression) | ("/" ~ PowerOfExpression) | ("%" ~ PowerOfExpression))*
 }
 
-PowerOfExpression = { UnaryAddOrSubtractExpression ~ (SP? ~ "^" ~ SP? ~ UnaryAddOrSubtractExpression)* }
+PowerOfExpression = { UnaryAddOrSubtractExpression ~ ("^" ~ UnaryAddOrSubtractExpression)* }
 
-UnaryAddOrSubtractExpression = { (("+"|"-") ~ SP?)* ~ StringListNullOperatorExpression }
+UnaryAddOrSubtractExpression = { ("+"|"-")* ~ StringListNullOperatorExpression }
 
 StringListNullOperatorExpression = {
     PropertyOrLabelsExpression ~ (StringOperatorExpression | ListOperatorExpression | NullOperatorExpression)*
 }
 
+// Inside brackets we need explicit SP?
 ListOperatorExpression = {
     (IN ~ PropertyOrLabelsExpression)
-    | ("[" ~ Expression ~ "]")
-    | ("[" ~ Expression? ~ ".." ~ Expression? ~ "]")
+    | ("[" ~ SP? ~ Expression ~ SP? ~ "]")
+    | ("[" ~ SP? ~ Expression? ~ ".." ~ Expression? ~ SP? ~ "]")
 }
 
 StringOperatorExpression = {
@@ -204,19 +212,19 @@ NullOperatorExpression = {
     | (IS ~ NOT ~ NULL_KW)
 }
 
-PropertyOrLabelsExpression = { Atom ~ (SP? ~ PropertyLookup)* ~ (SP? ~ NodeLabels)? }
+PropertyOrLabelsExpression = { Atom ~ PropertyLookup* ~ NodeLabels? }
 
 Atom = {
     Literal
     | Parameter
     | CaseExpression
-    | (COUNT ~ SP? ~ "(" ~ SP? ~ "*" ~ SP? ~ ")")
+    | (COUNT ~ "(" ~ SP? ~ "*" ~ SP? ~ ")")
     | ListComprehension
     | PatternComprehension
-    | (ALL ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
-    | (ANY_KW ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
-    | (NONE ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
-    | (SINGLE ~ SP? ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | (ALL ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | (ANY_KW ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | (NONE ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | (SINGLE ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
     | RelationshipsPattern
     | ParenthesizedExpression
     | FunctionInvocation
@@ -247,20 +255,20 @@ PartialComparisonExpression = {
 
 ParenthesizedExpression = { "(" ~ SP? ~ Expression ~ SP? ~ ")" }
 
-RelationshipsPattern = { NodePattern ~ (SP? ~ PatternElementChain)+ }
+RelationshipsPattern = { NodePattern ~ PatternElementChain+ }
 
-FilterExpression = { IdInColl ~ (SP? ~ Where)? }
+FilterExpression = { IdInColl ~ Where? }
 
-IdInColl = { Variable ~ SP ~ IN ~ SP ~ Expression }
+IdInColl = { Variable ~ IN ~ Expression }
 
 FunctionInvocation = {
-    FunctionName ~ SP? ~ "(" ~ SP? ~ (DISTINCT ~ SP?)? ~ (Expression ~ SP? ~ ("," ~ SP? ~ Expression ~ SP?)*)? ~ ")"
+    FunctionName ~ "(" ~ SP? ~ DISTINCT? ~ (Expression ~ SP? ~ ("," ~ SP? ~ Expression ~ SP?)*)? ~ ")"
 }
 
 FunctionName = { (Namespace ~ SymbolicName) | EXISTS }
 
 ExplicitProcedureInvocation = {
-    ProcedureName ~ SP? ~ "(" ~ SP? ~ (Expression ~ SP? ~ ("," ~ SP? ~ Expression ~ SP?)*)? ~ ")"
+    ProcedureName ~ "(" ~ SP? ~ (Expression ~ SP? ~ ("," ~ SP? ~ Expression ~ SP?)*)? ~ ")"
 }
 
 ImplicitProcedureInvocation = { ProcedureName }
@@ -277,13 +285,13 @@ PatternComprehension = {
     "[" ~ SP? ~ (Variable ~ SP? ~ "=" ~ SP?)? ~ RelationshipsPattern ~ SP? ~ (WHERE ~ SP? ~ Expression ~ SP?)? ~ "|" ~ SP? ~ Expression ~ SP? ~ "]"
 }
 
-PropertyLookup = { "." ~ SP? ~ PropertyKeyName }
+PropertyLookup = { "." ~ PropertyKeyName }
 
 CaseExpression = {
-    ((CASE ~ (SP? ~ CaseAlternatives)+) | (CASE ~ SP? ~ Expression ~ (SP? ~ CaseAlternatives)+)) ~ (SP? ~ ELSE ~ SP? ~ Expression)? ~ SP? ~ END
+    ((CASE ~ CaseAlternatives+) | (CASE ~ Expression ~ CaseAlternatives+)) ~ (ELSE ~ Expression)? ~ END
 }
 
-CaseAlternatives = { WHEN ~ SP? ~ Expression ~ SP? ~ THEN ~ SP? ~ Expression }
+CaseAlternatives = { WHEN ~ Expression ~ THEN ~ Expression }
 
 Variable = { SymbolicName }
 
@@ -339,8 +347,9 @@ OctDigit = { '0'..'7' }
 
 DoubleLiteral = @{ ExponentDecimalReal | RegularDecimalReal }
 
+// Order matters: try longer matches first (with decimal point before integer-only)
 ExponentDecimalReal = @{
-    (Digit+ | (Digit+ ~ "." ~ Digit+) | ("." ~ Digit+)) ~ ("E" | "e") ~ "-"? ~ Digit+
+    ((Digit+ ~ "." ~ Digit+) | ("." ~ Digit+) | Digit+) ~ ("E" | "e") ~ "-"? ~ Digit+
 }
 
 RegularDecimalReal = @{ Digit* ~ "." ~ Digit+ }
@@ -456,14 +465,17 @@ Dash = {
 // Whitespace and Comments
 // =============================================================================
 
-SP = _{ (WHITESPACE | Comment)+ }
+// SP is for explicit whitespace inside brackets/parens where implicit doesn't apply
+SP = _{ (WHITESPACE | COMMENT)+ }
 
+// WHITESPACE is special in pest - automatically inserted between non-atomic rule elements
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" | "\u{000B}" | "\u{000C}" | "\u{00A0}" | "\u{1680}"
     | "\u{2000}" | "\u{2001}" | "\u{2002}" | "\u{2003}" | "\u{2004}" | "\u{2005}"
     | "\u{2006}" | "\u{2007}" | "\u{2008}" | "\u{2009}" | "\u{200A}" | "\u{2028}"
     | "\u{2029}" | "\u{202F}" | "\u{205F}" | "\u{3000}" }
 
-Comment = _{
+// COMMENT is special in pest - automatically inserted between non-atomic rule elements (like WHITESPACE)
+COMMENT = _{
     ("/*" ~ (!"*/" ~ ANY)* ~ "*/")
     | ("//" ~ (!NEWLINE ~ ANY)*)
 }
