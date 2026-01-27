@@ -357,6 +357,9 @@ fn execute_pg_cypher_owned(
 /// For `RETURN a, r AS rel, b`, generates:
 /// `SELECT * FROM cypher(...) as (a agtype, rel agtype, b agtype)`
 ///
+/// For queries without RETURN (CREATE, DELETE, etc.), uses a placeholder column:
+/// `SELECT * FROM cypher(...) as (result agtype)`
+///
 /// Returns the SQL string and an optional Agtype parameter.
 /// When params is empty, no parameter is needed.
 fn build_age_query(
@@ -367,35 +370,42 @@ fn build_age_query(
     use crate::graph::cypher::{extract_return_columns, ParseError};
 
     // Extract column names from RETURN clause
-    let columns = extract_return_columns(cypher).map_err(|e| match e {
-        ParseError::ReturnStarNotSupported => AppError::Internal(
-            "RETURN * is not supported - please specify columns explicitly".into(),
-        ),
-        ParseError::NoReturnClause => AppError::Internal("Query must have a RETURN clause".into()),
-        ParseError::InvalidSyntax(msg) => {
-            AppError::Internal(format!("Cypher syntax error: {}", msg))
+    // For write-only queries (CREATE, DELETE, etc.) without RETURN,
+    // use a placeholder column - the query will return 0 rows anyway
+    let columns_sql = match extract_return_columns(cypher) {
+        Ok(columns) => {
+            // Generate column definitions for SQL
+            // Each column name becomes: "column_name agtype"
+            // We need to quote column names that contain special characters
+            let column_defs: Vec<String> = columns
+                .iter()
+                .map(|name| {
+                    // Quote column names that contain special characters
+                    if name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                        && !name.starts_with(|c: char| c.is_numeric())
+                    {
+                        format!("{} agtype", name)
+                    } else {
+                        // Use quoted identifier for names with special characters
+                        format!("\"{}\" agtype", name.replace('"', "\"\""))
+                    }
+                })
+                .collect();
+            column_defs.join(", ")
         }
-    })?;
-
-    // Generate column definitions for SQL
-    // Each column name becomes: "column_name agtype"
-    // We need to quote column names that contain special characters
-    let column_defs: Vec<String> = columns
-        .iter()
-        .map(|name| {
-            // Quote column names that contain special characters
-            if name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                && !name.starts_with(|c: char| c.is_numeric())
-            {
-                format!("{} agtype", name)
-            } else {
-                // Use quoted identifier for names with special characters
-                format!("\"{}\" agtype", name.replace('"', "\"\""))
-            }
-        })
-        .collect();
-
-    let columns_sql = column_defs.join(", ");
+        Err(ParseError::NoReturnClause) => {
+            // Write-only query without RETURN - use placeholder column
+            "result agtype".to_string()
+        }
+        Err(ParseError::ReturnStarNotSupported) => {
+            return Err(AppError::Internal(
+                "RETURN * is not supported - please specify columns explicitly".into(),
+            ));
+        }
+        Err(ParseError::InvalidSyntax(msg)) => {
+            return Err(AppError::Internal(format!("Cypher syntax error: {}", msg)));
+        }
+    };
 
     if params.is_empty() {
         let sql = format!(
@@ -545,6 +555,64 @@ mod tests {
         assert_eq!(
             sql,
             "SELECT * FROM cypher('test_graph', $$ MATCH (n) RETURN n.name, n.age AS age $$) as (\"n.name\" agtype, age agtype)"
+        );
+    }
+
+    #[test]
+    fn test_build_age_query_no_return_clause() {
+        // CREATE without RETURN - write-only query
+        let params = Params::new();
+        let (sql, agtype_param) =
+            build_age_query("test_graph", "CREATE (n:Test {id: 1})", &params).unwrap();
+
+        // Uses placeholder column for write-only queries
+        assert_eq!(
+            sql,
+            "SELECT * FROM cypher('test_graph', $$ CREATE (n:Test {id: 1}) $$) as (result agtype)"
+        );
+        assert!(agtype_param.is_none());
+    }
+
+    #[test]
+    fn test_build_age_query_no_return_with_params() {
+        // CREATE without RETURN but with parameters
+        let mut params = Params::new();
+        params.insert("id".to_string(), JsonValue::String("test-123".to_string()));
+
+        let (sql, agtype_param) =
+            build_age_query("test_graph", "CREATE (n:Test {id: $id})", &params).unwrap();
+
+        // Uses placeholder column with parameter
+        assert_eq!(
+            sql,
+            "SELECT * FROM cypher('test_graph', $$ CREATE (n:Test {id: $id}) $$, $1) as (result agtype)"
+        );
+        let param = agtype_param.expect("Should have agtype param");
+        assert!(param.0.contains("test-123"));
+    }
+
+    #[test]
+    fn test_build_age_query_delete_no_return() {
+        // DELETE without RETURN
+        let params = Params::new();
+        let (sql, _) = build_age_query("test_graph", "MATCH (n:Test) DELETE n", &params).unwrap();
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM cypher('test_graph', $$ MATCH (n:Test) DELETE n $$) as (result agtype)"
+        );
+    }
+
+    #[test]
+    fn test_build_age_query_detach_delete_no_return() {
+        // DETACH DELETE without RETURN
+        let params = Params::new();
+        let (sql, _) =
+            build_age_query("test_graph", "MATCH (n:Test) DETACH DELETE n", &params).unwrap();
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM cypher('test_graph', $$ MATCH (n:Test) DETACH DELETE n $$) as (result agtype)"
         );
     }
 }
