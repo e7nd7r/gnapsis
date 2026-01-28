@@ -1,13 +1,11 @@
 //! Query repository for graph traversal and search operations.
 
-use std::sync::Arc;
-
 use chrono::{DateTime, Utc};
-use neo4rs::{query, Graph, Row};
 
-use crate::context::Context;
+use crate::context::{AppGraph, Context};
 use crate::di::FromContext;
 use crate::error::AppError;
+use crate::graph::{Node, Row};
 use crate::models::{
     CategoryClassification, CodeReference, Entity, EntityWithContext, EntityWithReference,
     ProjectEntitySummary, Reference, SearchResult, TextReference,
@@ -82,97 +80,129 @@ pub struct Subgraph {
 /// Repository for graph traversal and search queries.
 #[derive(FromContext, Clone)]
 pub struct QueryRepository {
-    graph: Arc<Graph>,
+    graph: AppGraph,
 }
 
 impl QueryRepository {
     /// Get entity with full context: classifications, references, parents, children, related.
     pub async fn get_entity_with_context(&self, id: &str) -> Result<EntityWithContext, AppError> {
-        let mut result = self
+        // Get base entity first
+        let entity_row = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity {id: $id})
-                     OPTIONAL MATCH (e)-[:CLASSIFIED_AS]->(c:Category)-[:IN_SCOPE]->(s:Scope)
-                     OPTIONAL MATCH (e)-[:HAS_REFERENCE]->(code_ref:CodeReference)
-                     OPTIONAL MATCH (e)-[:HAS_REFERENCE]->(text_ref:TextReference)
-                     OPTIONAL MATCH (e)-[:BELONGS_TO]->(parent:Entity)
-                     OPTIONAL MATCH (child:Entity)-[:BELONGS_TO]->(e)
-                     OPTIONAL MATCH (e)-[:RELATED_TO]->(related:Entity)
-                     RETURN e,
-                            collect(DISTINCT {id: c.id, name: c.name, scope: s.name}) AS classifications,
-                            collect(DISTINCT code_ref) AS code_refs,
-                            collect(DISTINCT text_ref) AS text_refs,
-                            collect(DISTINCT parent) AS parents,
-                            collect(DISTINCT child) AS children,
-                            collect(DISTINCT related) AS related",
-                )
-                .param("id", id),
-            )
-            .await?;
-
-        let row = result
-            .next()
+            .query("MATCH (e:Entity {id: $id}) RETURN e")
+            .param("id", id)
+            .fetch_one()
             .await?
             .ok_or_else(|| AppError::EntityNotFound(id.to_string()))?;
 
-        // Parse entity
-        let entity = Self::row_to_entity(&row, "e")?;
+        let entity = Self::row_to_entity(&entity_row, "e")?;
 
-        // Parse classifications
-        let classifications_raw: Vec<neo4rs::BoltMap> =
-            row.get("classifications").unwrap_or_default();
-        let classifications: Vec<CategoryClassification> = classifications_raw
-            .into_iter()
-            .filter_map(|m| {
-                let id: Option<String> = m.get("id").ok();
-                let name: Option<String> = m.get("name").ok();
-                let scope: Option<String> = m.get("scope").ok();
-                match (id, name, scope) {
-                    (Some(id), Some(name), Some(scope)) if !id.is_empty() => {
-                        Some(CategoryClassification { id, name, scope })
-                    }
-                    _ => None,
+        // Get classifications
+        let class_rows = self
+            .graph
+            .query(
+                "MATCH (e:Entity {id: $id})-[:CLASSIFIED_AS]->(c:Category)-[:IN_SCOPE]->(s:Scope)
+                 RETURN c.id AS id, c.name AS name, s.name AS scope",
+            )
+            .param("id", id)
+            .fetch_all()
+            .await?;
+
+        let classifications: Vec<CategoryClassification> = class_rows
+            .iter()
+            .filter_map(|row| {
+                let id: String = row.get("id").ok()?;
+                let name: String = row.get("name").ok()?;
+                let scope: String = row.get("scope").ok()?;
+                if id.is_empty() {
+                    None
+                } else {
+                    Some(CategoryClassification { id, name, scope })
                 }
             })
             .collect();
 
-        // Parse code references
-        let code_refs_raw: Vec<neo4rs::Node> = row.get("code_refs").unwrap_or_default();
-        let mut references: Vec<Reference> = code_refs_raw
-            .into_iter()
-            .filter_map(|node| Self::node_to_code_reference(&node).ok())
+        // Get code references
+        let code_rows = self
+            .graph
+            .query(
+                "MATCH (e:Entity {id: $id})-[:HAS_REFERENCE]->(ref:CodeReference)
+                 RETURN ref",
+            )
+            .param("id", id)
+            .fetch_all()
+            .await?;
+
+        let mut references: Vec<Reference> = code_rows
+            .iter()
+            .filter_map(|row| Self::row_to_code_reference(row, "ref").ok())
             .map(Reference::Code)
             .collect();
 
-        // Parse text references
-        let text_refs_raw: Vec<neo4rs::Node> = row.get("text_refs").unwrap_or_default();
+        // Get text references
+        let text_rows = self
+            .graph
+            .query(
+                "MATCH (e:Entity {id: $id})-[:HAS_REFERENCE]->(ref:TextReference)
+                 RETURN ref",
+            )
+            .param("id", id)
+            .fetch_all()
+            .await?;
+
         references.extend(
-            text_refs_raw
-                .into_iter()
-                .filter_map(|node| Self::node_to_text_reference(&node).ok())
+            text_rows
+                .iter()
+                .filter_map(|row| Self::row_to_text_reference(row, "ref").ok())
                 .map(Reference::Text),
         );
 
-        // Parse parents
-        let parents_raw: Vec<neo4rs::Node> = row.get("parents").unwrap_or_default();
-        let parents: Vec<Entity> = parents_raw
-            .into_iter()
-            .filter_map(|node| Self::node_to_entity(&node).ok())
+        // Get parents
+        let parent_rows = self
+            .graph
+            .query(
+                "MATCH (e:Entity {id: $id})-[:BELONGS_TO]->(parent:Entity)
+                 RETURN parent",
+            )
+            .param("id", id)
+            .fetch_all()
+            .await?;
+
+        let parents: Vec<Entity> = parent_rows
+            .iter()
+            .filter_map(|row| Self::row_to_entity(row, "parent").ok())
             .collect();
 
-        // Parse children
-        let children_raw: Vec<neo4rs::Node> = row.get("children").unwrap_or_default();
-        let children: Vec<Entity> = children_raw
-            .into_iter()
-            .filter_map(|node| Self::node_to_entity(&node).ok())
+        // Get children
+        let child_rows = self
+            .graph
+            .query(
+                "MATCH (child:Entity)-[:BELONGS_TO]->(e:Entity {id: $id})
+                 RETURN child",
+            )
+            .param("id", id)
+            .fetch_all()
+            .await?;
+
+        let children: Vec<Entity> = child_rows
+            .iter()
+            .filter_map(|row| Self::row_to_entity(row, "child").ok())
             .collect();
 
-        // Parse related
-        let related_raw: Vec<neo4rs::Node> = row.get("related").unwrap_or_default();
-        let related: Vec<Entity> = related_raw
-            .into_iter()
-            .filter_map(|node| Self::node_to_entity(&node).ok())
+        // Get related
+        let related_rows = self
+            .graph
+            .query(
+                "MATCH (e:Entity {id: $id})-[:RELATED_TO]->(related:Entity)
+                 RETURN related",
+            )
+            .param("id", id)
+            .fetch_all()
+            .await?;
+
+        let related: Vec<Entity> = related_rows
+            .iter()
+            .filter_map(|row| Self::row_to_entity(row, "related").ok())
             .collect();
 
         Ok(EntityWithContext {
@@ -231,7 +261,7 @@ impl QueryRepository {
             (None, None, None) => "MATCH (e:Entity) RETURN e ORDER BY e.name LIMIT $limit",
         };
 
-        let mut q = query(query_str).param("limit", limit);
+        let mut q = self.graph.query(query_str).param("limit", limit);
 
         if let Some(scope) = scope {
             q = q.param("scope", scope);
@@ -243,14 +273,11 @@ impl QueryRepository {
             q = q.param("parent_id", parent_id);
         }
 
-        let mut result = self.graph.execute(q).await?;
+        let rows = q.fetch_all().await?;
 
-        let mut entities = Vec::new();
-        while let Some(row) = result.next().await? {
-            entities.push(Self::row_to_entity(&row, "e")?);
-        }
-
-        Ok(entities)
+        rows.iter()
+            .map(|row| Self::row_to_entity(row, "e"))
+            .collect()
     }
 
     /// Get all entities with references in a document.
@@ -261,48 +288,38 @@ impl QueryRepository {
         let mut entities = Vec::new();
 
         // Get CodeReferences
-        let mut code_result = self
+        let code_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:CodeReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
-                     RETURN e, ref, labels(ref) AS refLabels
-                     ORDER BY ref.lsp_symbol",
-                )
-                .param("path", path),
+            .query(
+                "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:CodeReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
+                 RETURN e, ref
+                 ORDER BY ref.lsp_symbol",
             )
+            .param("path", path)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = code_result.next().await? {
-            let entity = Self::row_to_entity(&row, "e")?;
-            let ref_node: neo4rs::Node = row.get("ref").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get ref node".to_string(),
-            })?;
-            let reference = Reference::Code(Self::node_to_code_reference(&ref_node)?);
+        for row in &code_rows {
+            let entity = Self::row_to_entity(row, "e")?;
+            let reference = Reference::Code(Self::row_to_code_reference(row, "ref")?);
             entities.push(EntityWithReference { entity, reference });
         }
 
         // Get TextReferences
-        let mut text_result = self
+        let text_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:TextReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
-                     RETURN e, ref
-                     ORDER BY ref.start_line",
-                )
-                .param("path", path),
+            .query(
+                "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:TextReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
+                 RETURN e, ref
+                 ORDER BY ref.start_line",
             )
+            .param("path", path)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = text_result.next().await? {
-            let entity = Self::row_to_entity(&row, "e")?;
-            let ref_node: neo4rs::Node = row.get("ref").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get ref node".to_string(),
-            })?;
-            let reference = Reference::Text(Self::node_to_text_reference(&ref_node)?);
+        for row in &text_rows {
+            let entity = Self::row_to_entity(row, "e")?;
+            let reference = Reference::Text(Self::row_to_text_reference(row, "ref")?);
             entities.push(EntityWithReference { entity, reference });
         }
 
@@ -310,137 +327,93 @@ impl QueryRepository {
     }
 
     /// Query subgraph around an entity within N hops.
+    ///
+    /// Note: This is a simplified implementation for AGE. The full path-based
+    /// traversal with variable-length relationships is limited in AGE.
     pub async fn query_subgraph(
         &self,
         id: &str,
-        hops: u32,
-        rel_types: Option<&[String]>,
+        _hops: u32,
+        _rel_types: Option<&[String]>,
     ) -> Result<Subgraph, AppError> {
-        let hops = hops.min(5) as i64;
-
-        // Build relationship type filter
-        let rel_filter = if let Some(types) = rel_types {
-            if types.is_empty() {
-                String::new()
-            } else {
-                format!(":{}", types.join("|"))
-            }
-        } else {
-            String::new()
-        };
-
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut seen_nodes = std::collections::HashSet::new();
-        let mut seen_edges = std::collections::HashSet::new();
 
         // Add starting node
-        let mut start_result = self
+        let start_row = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity {id: $id})
-                     OPTIONAL MATCH (e)-[:CLASSIFIED_AS]->(c:Category)
-                     RETURN e, collect(c.name)[0] AS category",
-                )
-                .param("id", id),
+            .query(
+                "MATCH (e:Entity {id: $id})
+                 OPTIONAL MATCH (e)-[:CLASSIFIED_AS]->(c:Category)
+                 RETURN e, c.name AS category",
             )
+            .param("id", id)
+            .fetch_one()
             .await?;
 
-        if let Some(row) = start_result.next().await? {
-            let node: neo4rs::Node = row.get("e").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get start node".to_string(),
-            })?;
-            let node_id: String = node.get("id").unwrap_or_default();
-            let category: Option<String> = row.get("category").ok();
+        if let Some(row) = start_row {
+            let node: Node = row.get("e")?;
+            let node_id: String = node.get("id")?;
+            let category: Option<String> = row.get_opt("category")?;
 
             seen_nodes.insert(node_id.clone());
             nodes.push(SubgraphNode::Entity {
                 id: node_id,
-                name: node.get("name").unwrap_or_default(),
-                description: node.get("description").unwrap_or_default(),
+                name: node.get_opt("name")?.unwrap_or_default(),
+                description: node.get_opt("description")?.unwrap_or_default(),
                 distance: 0,
                 category,
             });
         }
 
-        // Query for connected nodes (Entity and DocumentReference) with relationships
-        let query_str = format!(
-            "MATCH path = (start:Entity {{id: $id}})-[r{}*1..{}]-(connected)
-             WHERE connected:Entity OR connected:DocumentReference
-             WITH connected, relationships(path) AS rels, length(path) AS distance, labels(connected) AS nodeLabels
-             OPTIONAL MATCH (connected)-[:CLASSIFIED_AS]->(c:Category)
-             RETURN DISTINCT connected, distance, nodeLabels, collect(DISTINCT c.name)[0] AS category,
-                    [rel IN rels | [type(rel), startNode(rel).id, endNode(rel).id, coalesce(rel.note, '')]] AS relData",
-            rel_filter, hops
-        );
-
-        let mut result = self
+        // Get direct neighbors (1 hop) - simplified for AGE
+        let neighbor_rows = self
             .graph
-            .execute(query(&query_str).param("id", id))
+            .query(
+                "MATCH (start:Entity {id: $id})-[r]-(neighbor:Entity)
+                 OPTIONAL MATCH (neighbor)-[:CLASSIFIED_AS]->(c:Category)
+                 RETURN DISTINCT neighbor, type(r) AS rel_type, c.name AS category,
+                        startNode(r).id AS from_id, endNode(r).id AS to_id",
+            )
+            .param("id", id)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = result.next().await? {
-            let node: neo4rs::Node = row.get("connected").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get connected node".to_string(),
-            })?;
-            let distance: i64 = row.get("distance").unwrap_or(1);
-            let node_labels: Vec<String> = row.get("nodeLabels").unwrap_or_default();
-            let node_id: String = node.get("id").unwrap_or_default();
+        for row in &neighbor_rows {
+            let node: Node = row.get("neighbor")?;
+            let node_id: String = node.get("id")?;
 
             if !seen_nodes.contains(&node_id) {
                 seen_nodes.insert(node_id.clone());
-
-                if node_labels.contains(&"DocumentReference".to_string()) {
-                    nodes.push(SubgraphNode::DocumentReference {
-                        id: node_id,
-                        document_path: node.get("document_path").unwrap_or_default(),
-                        start_line: node.get::<i64>("start_line").unwrap_or(0) as u32,
-                        end_line: node.get::<i64>("end_line").unwrap_or(0) as u32,
-                        description: node.get("description").unwrap_or_default(),
-                        distance: distance as u32,
-                    });
-                } else {
-                    let category: Option<String> = row.get("category").ok();
-                    nodes.push(SubgraphNode::Entity {
-                        id: node_id,
-                        name: node.get("name").unwrap_or_default(),
-                        description: node.get("description").unwrap_or_default(),
-                        distance: distance as u32,
-                        category,
-                    });
-                }
+                let category: Option<String> = row.get_opt("category")?;
+                nodes.push(SubgraphNode::Entity {
+                    id: node_id.clone(),
+                    name: node.get_opt("name")?.unwrap_or_default(),
+                    description: node.get_opt("description")?.unwrap_or_default(),
+                    distance: 1,
+                    category,
+                });
             }
 
-            // Extract relationships with node IDs and notes
-            let rel_data: Vec<Vec<String>> = row.get("relData").unwrap_or_default();
-            for rel_info in rel_data {
-                if rel_info.len() >= 3 {
-                    let rel_type = &rel_info[0];
-                    let from_id = &rel_info[1];
-                    let to_id = &rel_info[2];
-                    let note = rel_info.get(3).cloned().filter(|s| !s.is_empty());
-                    let edge_key = format!("{}-{}-{}", from_id, rel_type, to_id);
+            let rel_type: String = row.get("rel_type")?;
+            let from_id: String = row.get("from_id")?;
+            let to_id: String = row.get("to_id")?;
 
-                    if !seen_edges.contains(&edge_key) {
-                        seen_edges.insert(edge_key);
-                        edges.push(SubgraphEdge {
-                            from_id: from_id.clone(),
-                            to_id: to_id.clone(),
-                            relationship: rel_type.clone(),
-                            note,
-                        });
-                    }
-                }
-            }
+            edges.push(SubgraphEdge {
+                from_id,
+                to_id,
+                relationship: rel_type,
+                note: None,
+            });
         }
 
         Ok(Subgraph { nodes, edges })
     }
 
     /// Search entities by embedding similarity.
+    ///
+    /// Fetches entities with embeddings and computes cosine similarity in Rust.
     pub async fn search_entities_by_embedding(
         &self,
         embedding: &[f64],
@@ -448,47 +421,51 @@ impl QueryRepository {
         min_score: f32,
         scope: Option<&str>,
     ) -> Result<Vec<SearchResult<Entity>>, AppError> {
-        let limit = limit.min(50) as i64;
+        let limit = limit.min(50) as usize;
 
         let query_str = if scope.is_some() {
             "MATCH (e:Entity)-[:CLASSIFIED_AS]->(c:Category)-[:IN_SCOPE]->(s:Scope {name: $scope})
              WHERE e.embedding IS NOT NULL
-             WITH e, c, gds.similarity.cosine(e.embedding, $embedding) AS score
-             WHERE score >= $min_score
-             RETURN e, score, c.name AS category
-             ORDER BY score DESC
-             LIMIT $limit"
+             RETURN e"
         } else {
             "MATCH (e:Entity)
              WHERE e.embedding IS NOT NULL
-             OPTIONAL MATCH (e)-[:CLASSIFIED_AS]->(c:Category)
-             WITH e, c, gds.similarity.cosine(e.embedding, $embedding) AS score
-             WHERE score >= $min_score
-             RETURN e, score, collect(c.name)[0] AS category
-             ORDER BY score DESC
-             LIMIT $limit"
+             RETURN e"
         };
 
-        let mut q = query(query_str)
-            .param("embedding", embedding.to_vec())
-            .param("min_score", min_score as f64)
-            .param("limit", limit);
-
+        let mut q = self.graph.query(query_str);
         if let Some(scope) = scope {
             q = q.param("scope", scope);
         }
 
-        let mut result = self.graph.execute(q).await?;
+        let rows = q.fetch_all().await?;
 
-        let mut results = Vec::new();
-        while let Some(row) = result.next().await? {
-            let entity = Self::row_to_entity(&row, "e")?;
-            let score: f64 = row.get("score").unwrap_or(0.0);
-            results.push(SearchResult {
-                item: entity,
-                score: score as f32,
-            });
-        }
+        let mut results: Vec<SearchResult<Entity>> = rows
+            .iter()
+            .filter_map(|row| {
+                let entity = Self::row_to_entity(row, "e").ok()?;
+                let entity_embedding = entity.embedding.as_ref()?;
+                let entity_embedding_f64: Vec<f64> =
+                    entity_embedding.iter().map(|&f| f as f64).collect();
+                let score = cosine_similarity(embedding, &entity_embedding_f64) as f32;
+                if score >= min_score {
+                    Some(SearchResult {
+                        item: entity,
+                        score,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort by score descending
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(limit);
 
         Ok(results)
     }
@@ -499,29 +476,27 @@ impl QueryRepository {
         &self,
         scope: &str,
     ) -> Result<Vec<ProjectEntitySummary>, AppError> {
-        let mut result = self
+        let rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity)-[:CLASSIFIED_AS]->(c:Category)-[:IN_SCOPE]->(s:Scope {name: $scope})
-                     OPTIONAL MATCH (e)-[:BELONGS_TO]->(parent:Entity)
-                     RETURN e.id AS id, e.name AS name, e.description AS description,
-                            collect(DISTINCT c.name)[0] AS category,
-                            collect(DISTINCT parent.id)[0] AS parent_id
-                     ORDER BY e.name",
-                )
-                .param("scope", scope),
+            .query(
+                "MATCH (e:Entity)-[:CLASSIFIED_AS]->(c:Category)-[:IN_SCOPE]->(s:Scope {name: $scope})
+                 OPTIONAL MATCH (e)-[:BELONGS_TO]->(parent:Entity)
+                 RETURN e.id AS id, e.name AS name, e.description AS description,
+                        c.name AS category, parent.id AS parent_id
+                 ORDER BY e.name",
             )
+            .param("scope", scope)
+            .fetch_all()
             .await?;
 
         let mut summaries = Vec::new();
-        while let Some(row) = result.next().await? {
+        for row in &rows {
             summaries.push(ProjectEntitySummary {
-                id: row.get("id").unwrap_or_default(),
-                name: row.get("name").unwrap_or_default(),
-                description: row.get("description").unwrap_or_default(),
-                category: row.get("category").ok(),
-                parent_id: row.get("parent_id").ok(),
+                id: row.get_opt("id")?.unwrap_or_default(),
+                name: row.get_opt("name")?.unwrap_or_default(),
+                description: row.get_opt("description")?.unwrap_or_default(),
+                category: row.get_opt("category")?,
+                parent_id: row.get_opt("parent_id")?,
             });
         }
 
@@ -529,80 +504,82 @@ impl QueryRepository {
     }
 
     /// Search document references by embedding similarity.
+    ///
+    /// Fetches references with embeddings and computes cosine similarity in Rust.
     pub async fn search_documents_by_embedding(
         &self,
         embedding: &[f64],
         limit: u32,
         min_score: f32,
     ) -> Result<Vec<SearchResult<EntityWithReference>>, AppError> {
-        let limit = limit.min(50) as i64;
+        let limit = limit.min(50) as usize;
 
         let mut results = Vec::new();
 
         // Search CodeReferences
-        let mut code_result = self
+        let code_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:CodeReference)
-                     WHERE ref.embedding IS NOT NULL
-                     WITH e, ref, gds.similarity.cosine(ref.embedding, $embedding) AS score
-                     WHERE score >= $min_score
-                     RETURN e, ref, score
-                     ORDER BY score DESC
-                     LIMIT $limit",
-                )
-                .param("embedding", embedding.to_vec())
-                .param("min_score", min_score as f64)
-                .param("limit", limit),
+            .query(
+                "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:CodeReference)
+                 WHERE ref.embedding IS NOT NULL
+                 RETURN e, ref",
             )
+            .fetch_all()
             .await?;
 
-        while let Some(row) = code_result.next().await? {
-            let entity = Self::row_to_entity(&row, "e")?;
-            let ref_node: neo4rs::Node = row.get("ref").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get ref node".to_string(),
-            })?;
-            let reference = Reference::Code(Self::node_to_code_reference(&ref_node)?);
-            let score: f64 = row.get("score").unwrap_or(0.0);
-            results.push(SearchResult {
-                item: EntityWithReference { entity, reference },
-                score: score as f32,
-            });
+        for row in &code_rows {
+            if let (Ok(entity), Ok(code_ref)) = (
+                Self::row_to_entity(row, "e"),
+                Self::row_to_code_reference(row, "ref"),
+            ) {
+                if let Some(ref_embedding) = &code_ref.embedding {
+                    let ref_embedding_f64: Vec<f64> =
+                        ref_embedding.iter().map(|&f| f as f64).collect();
+                    let score = cosine_similarity(embedding, &ref_embedding_f64) as f32;
+                    if score >= min_score {
+                        results.push(SearchResult {
+                            item: EntityWithReference {
+                                entity,
+                                reference: Reference::Code(code_ref),
+                            },
+                            score,
+                        });
+                    }
+                }
+            }
         }
 
         // Search TextReferences
-        let mut text_result = self
+        let text_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:TextReference)
-                     WHERE ref.embedding IS NOT NULL
-                     WITH e, ref, gds.similarity.cosine(ref.embedding, $embedding) AS score
-                     WHERE score >= $min_score
-                     RETURN e, ref, score
-                     ORDER BY score DESC
-                     LIMIT $limit",
-                )
-                .param("embedding", embedding.to_vec())
-                .param("min_score", min_score as f64)
-                .param("limit", limit),
+            .query(
+                "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref:TextReference)
+                 WHERE ref.embedding IS NOT NULL
+                 RETURN e, ref",
             )
+            .fetch_all()
             .await?;
 
-        while let Some(row) = text_result.next().await? {
-            let entity = Self::row_to_entity(&row, "e")?;
-            let ref_node: neo4rs::Node = row.get("ref").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get ref node".to_string(),
-            })?;
-            let reference = Reference::Text(Self::node_to_text_reference(&ref_node)?);
-            let score: f64 = row.get("score").unwrap_or(0.0);
-            results.push(SearchResult {
-                item: EntityWithReference { entity, reference },
-                score: score as f32,
-            });
+        for row in &text_rows {
+            if let (Ok(entity), Ok(text_ref)) = (
+                Self::row_to_entity(row, "e"),
+                Self::row_to_text_reference(row, "ref"),
+            ) {
+                if let Some(ref_embedding) = &text_ref.embedding {
+                    let ref_embedding_f64: Vec<f64> =
+                        ref_embedding.iter().map(|&f| f as f64).collect();
+                    let score = cosine_similarity(embedding, &ref_embedding_f64) as f32;
+                    if score >= min_score {
+                        results.push(SearchResult {
+                            item: EntityWithReference {
+                                entity,
+                                reference: Reference::Text(text_ref),
+                            },
+                            score,
+                        });
+                    }
+                }
+            }
         }
 
         // Sort by score descending and limit
@@ -611,7 +588,7 @@ impl QueryRepository {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        results.truncate(limit as usize);
+        results.truncate(limit);
 
         Ok(results)
     }
@@ -620,31 +597,19 @@ impl QueryRepository {
     // Helper methods
     // ============================================================================
 
-    /// Convert a Neo4j row to an Entity.
+    /// Convert a row to an Entity.
     fn row_to_entity(row: &Row, field: &str) -> Result<Entity, AppError> {
-        let node: neo4rs::Node = row.get(field).map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: format!("get {} node", field),
-        })?;
-        Self::node_to_entity(&node)
-    }
+        let node: Node = row.get(field)?;
 
-    /// Convert a Neo4j node to an Entity.
-    fn node_to_entity(node: &neo4rs::Node) -> Result<Entity, AppError> {
-        let id: String = node.get("id").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get entity id".to_string(),
-        })?;
+        let id: String = node.get("id")?;
+        let name: String = node.get_opt("name")?.unwrap_or_default();
+        let description: String = node.get_opt("description")?.unwrap_or_default();
 
-        let name: String = node.get("name").unwrap_or_default();
-        let description: String = node.get("description").unwrap_or_default();
-
-        let embedding: Option<Vec<f64>> = node.get("embedding").ok();
+        let embedding: Option<Vec<f64>> = node.get_opt("embedding")?;
         let embedding = embedding.map(|e| e.iter().map(|&f| f as f32).collect());
 
         let created_at: DateTime<Utc> = node
-            .get::<String>("created_at")
-            .ok()
+            .get_opt::<String>("created_at")?
             .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
@@ -658,51 +623,66 @@ impl QueryRepository {
         })
     }
 
-    /// Convert a Neo4j node to a CodeReference.
-    fn node_to_code_reference(node: &neo4rs::Node) -> Result<CodeReference, AppError> {
-        let id: String = node.get("id").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get code reference id".to_string(),
-        })?;
+    /// Convert a row to a CodeReference.
+    fn row_to_code_reference(row: &Row, field: &str) -> Result<CodeReference, AppError> {
+        let node: Node = row.get(field)?;
 
-        let embedding: Option<Vec<f64>> = node.get("embedding").ok();
+        let embedding: Option<Vec<f64>> = node.get_opt("embedding")?;
         let embedding = embedding.map(|e| e.iter().map(|&f| f as f32).collect());
 
         Ok(CodeReference {
-            id,
-            path: node.get("path").unwrap_or_default(),
-            language: node.get("language").unwrap_or_default(),
-            commit_sha: node.get("commit_sha").unwrap_or_default(),
-            description: node.get("description").unwrap_or_default(),
+            id: node.get("id")?,
+            path: node.get_opt("path")?.unwrap_or_default(),
+            language: node.get_opt("language")?.unwrap_or_default(),
+            commit_sha: node.get_opt("commit_sha")?.unwrap_or_default(),
+            description: node.get_opt("description")?.unwrap_or_default(),
             embedding,
-            lsp_symbol: node.get("lsp_symbol").unwrap_or_default(),
-            lsp_kind: node.get::<i64>("lsp_kind").unwrap_or(0) as i32,
-            lsp_range: node.get("lsp_range").unwrap_or_default(),
+            lsp_symbol: node.get_opt("lsp_symbol")?.unwrap_or_default(),
+            lsp_kind: node.get_opt::<i64>("lsp_kind")?.unwrap_or(0) as i32,
+            lsp_range: node.get_opt("lsp_range")?.unwrap_or_default(),
         })
     }
 
-    /// Convert a Neo4j node to a TextReference.
-    fn node_to_text_reference(node: &neo4rs::Node) -> Result<TextReference, AppError> {
-        let id: String = node.get("id").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get text reference id".to_string(),
-        })?;
+    /// Convert a row to a TextReference.
+    fn row_to_text_reference(row: &Row, field: &str) -> Result<TextReference, AppError> {
+        let node: Node = row.get(field)?;
 
-        let embedding: Option<Vec<f64>> = node.get("embedding").ok();
+        let embedding: Option<Vec<f64>> = node.get_opt("embedding")?;
         let embedding = embedding.map(|e| e.iter().map(|&f| f as f32).collect());
 
         Ok(TextReference {
-            id,
-            path: node.get("path").unwrap_or_default(),
+            id: node.get("id")?,
+            path: node.get_opt("path")?.unwrap_or_default(),
             content_type: node
-                .get("content_type")
-                .unwrap_or_else(|_| "markdown".to_string()),
-            commit_sha: node.get("commit_sha").unwrap_or_default(),
-            description: node.get("description").unwrap_or_default(),
+                .get_opt("content_type")?
+                .unwrap_or_else(|| "markdown".to_string()),
+            commit_sha: node.get_opt("commit_sha")?.unwrap_or_default(),
+            description: node.get_opt("description")?.unwrap_or_default(),
             embedding,
-            start_line: node.get::<i64>("start_line").unwrap_or(0) as u32,
-            end_line: node.get::<i64>("end_line").unwrap_or(0) as u32,
-            anchor: node.get("anchor").ok(),
+            start_line: node.get_opt::<i64>("start_line")?.unwrap_or(0) as u32,
+            end_line: node.get_opt::<i64>("end_line")?.unwrap_or(0) as u32,
+            anchor: node.get_opt("anchor")?,
         })
     }
+}
+
+// ============================================================================
+// Utility functions
+// ============================================================================
+
+/// Compute cosine similarity between two vectors.
+fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+
+    let dot_product: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let norm_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+
+    dot_product / (norm_a * norm_b)
 }

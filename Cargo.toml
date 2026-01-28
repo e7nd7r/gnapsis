@@ -45,9 +45,6 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Neo4j async driver
-neo4rs = "0.8"
-
 # Git operations
 git2 = "0.19"
 

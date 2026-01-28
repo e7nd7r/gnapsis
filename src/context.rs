@@ -1,13 +1,17 @@
 //! Application context providing dependency injection root.
 
-use neo4rs::Graph;
 use raggy::embeddings::FastEmbedProvider;
 use raggy::Embedder;
 use std::sync::Arc;
 
 use crate::config::Config;
 use crate::di::Context as ContextDerive;
+use crate::graph::backends::postgres::PostgresClient;
+use crate::graph::Graph;
 use crate::nvim::LazyNvimClient;
+
+/// Type alias for the graph client used throughout the application.
+pub type AppGraph = Graph<PostgresClient>;
 
 /// Type alias for the embedder used throughout the application.
 pub type AppEmbedder = Arc<Embedder<FastEmbedProvider>>;
@@ -19,8 +23,8 @@ pub type AppEmbedder = Arc<Embedder<FastEmbedProvider>>;
 /// compile-time dependency resolution.
 #[derive(ContextDerive, Clone)]
 pub struct Context {
-    /// Neo4j graph database connection pool.
-    pub graph: Arc<Graph>,
+    /// PostgreSQL + Apache AGE graph database client.
+    pub graph: AppGraph,
     /// Application configuration.
     pub config: Arc<Config>,
     /// Embedding provider for semantic search.
@@ -31,9 +35,13 @@ pub struct Context {
 
 impl Context {
     /// Creates a new context with the given dependencies.
-    pub fn new(graph: Graph, config: Config, embedder: Embedder<FastEmbedProvider>) -> Self {
+    pub fn new(
+        graph: Graph<PostgresClient>,
+        config: Config,
+        embedder: Embedder<FastEmbedProvider>,
+    ) -> Self {
         Self {
-            graph: Arc::new(graph),
+            graph,
             config: Arc::new(config),
             embedder: Arc::new(embedder),
             nvim: LazyNvimClient::new(),

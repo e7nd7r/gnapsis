@@ -6,11 +6,11 @@ use thiserror::Error;
 /// Application-level errors for Gnapsis.
 #[derive(Error, Debug)]
 pub enum AppError {
-    // Neo4j errors
-    #[error("Neo4j connection error: {0}")]
-    Connection(#[from] neo4rs::Error),
+    // Database errors
+    #[error("Database connection error: {0}")]
+    Connection(String),
 
-    #[error("Neo4j query error: {message}")]
+    #[error("Database query error: {message}")]
     Query { message: String, query: String },
 
     // Domain errors

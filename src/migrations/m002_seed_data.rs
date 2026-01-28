@@ -1,21 +1,20 @@
 //! Seed data migration - scopes and default categories.
 
 use crate::error::AppError;
-use crate::graph::{CypherExecutor, QueryExt, SqlExecutor};
+use crate::graph::{CypherExecutor, QueryExt};
 use crate::models::{generate_ulid, Scope};
 
 /// Seed data migration (scopes and categories).
-pub struct M003SeedData;
+pub struct M002SeedData;
 
-impl M003SeedData {
+impl M002SeedData {
     /// Apply the migration.
     pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
     where
-        T: CypherExecutor + SqlExecutor + Sync,
+        T: CypherExecutor + Sync,
     {
         self.create_scopes(txn).await?;
         self.create_default_categories(txn).await?;
-        self.attach_triggers(txn).await?;
         Ok(())
     }
 
@@ -101,14 +100,6 @@ impl M003SeedData {
             .run()
             .await?;
         }
-        Ok(())
-    }
-
-    /// Attach triggers to the now-existing label tables.
-    async fn attach_triggers<T: SqlExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
-        // Call the helper function created in M002 to attach triggers
-        // The label tables should now exist after creating seed data
-        txn.execute_sql("SELECT attach_graph_triggers()").await?;
         Ok(())
     }
 }

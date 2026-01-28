@@ -341,7 +341,7 @@ fn detect_document_type(path: &str) -> String {
     "text".to_string()
 }
 
-/// Entity reference info from Neo4j query.
+/// Entity reference info.
 #[derive(Debug)]
 struct EntityRefInfo {
     entity_id: String,
@@ -354,45 +354,19 @@ async fn get_entity_references(
     doc_repo: &DocumentRepository,
     document_path: &str,
 ) -> Result<Vec<EntityRefInfo>, McpError> {
-    use neo4rs::query;
-
-    // Query entities and their references in this document
-    let graph = doc_repo.graph();
-    let mut result = graph
-        .execute(
-            query(
-                "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref)-[:IN_DOCUMENT]->(d:Document {path: $path})
-                 RETURN e.id AS entity_id, e.name AS entity_name, ref.id AS reference_id",
-            )
-            .param("path", document_path),
-        )
+    let refs = doc_repo
+        .get_document_entity_references(document_path)
         .await
         .map_err(|e| McpError::internal_error(format!("Query failed: {}", e), None))?;
 
-    let mut refs = Vec::new();
-    while let Some(row) = result
-        .next()
-        .await
-        .map_err(|e| McpError::internal_error(format!("Row fetch failed: {}", e), None))?
-    {
-        let entity_id: String = row
-            .get("entity_id")
-            .map_err(|e| McpError::internal_error(format!("Parse error: {}", e), None))?;
-        let entity_name: String = row
-            .get("entity_name")
-            .map_err(|e| McpError::internal_error(format!("Parse error: {}", e), None))?;
-        let reference_id: String = row
-            .get("reference_id")
-            .map_err(|e| McpError::internal_error(format!("Parse error: {}", e), None))?;
-
-        refs.push(EntityRefInfo {
+    Ok(refs
+        .into_iter()
+        .map(|(entity_id, entity_name, reference_id)| EntityRefInfo {
             entity_id,
             entity_name,
             reference_id,
-        });
-    }
-
-    Ok(refs)
+        })
+        .collect())
 }
 
 /// Get diff hunks for the document.

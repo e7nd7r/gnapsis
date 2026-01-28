@@ -456,11 +456,11 @@ mod migration_tests {
 
         println!("Migration result: {:?}", result);
 
-        // On a fresh db (after db-reset), we should apply all 5 migrations
+        // On a fresh db (after db-reset), we should apply all 4 migrations
         // On subsequent runs, we may apply 0 if already at latest version
         assert!(
-            result.current_version >= 5,
-            "Should be at version 5 or higher"
+            result.current_version >= 4,
+            "Should be at version 4 or higher"
         );
 
         // Verify schema_version table exists and has correct version
@@ -476,7 +476,7 @@ mod migration_tests {
 
         assert_eq!(rows.len(), 1, "Should have one schema_version row");
         let version: i64 = rows[0].get("version").expect("Should have version");
-        assert!(version >= 5, "Version should be >= 5");
+        assert!(version >= 4, "Version should be >= 4");
 
         // Verify the AGE graph exists
         let txn = client.begin().await.expect("Failed to begin transaction");
@@ -525,30 +525,6 @@ mod migration_tests {
 
         let count: i64 = rows[0].get("cnt").unwrap_or(0);
         assert!(count >= 17, "Should have at least 17 default categories");
-
-        // Verify trigger functions exist
-        let txn = client.begin().await.expect("Failed to begin transaction");
-        let rows: Vec<_> = txn
-            .query_sql(
-                "SELECT proname FROM pg_proc WHERE proname IN (
-                    'prevent_delete_with_children',
-                    'cascade_delete_entity_references',
-                    'validate_belongs_to_scope',
-                    'attach_graph_triggers'
-                )",
-            )
-            .await
-            .expect("Should query functions")
-            .try_collect()
-            .await
-            .expect("Should collect rows");
-        txn.commit().await.expect("Failed to commit");
-
-        assert!(
-            rows.len() >= 4,
-            "Should have at least 4 trigger functions, found {}",
-            rows.len()
-        );
 
         // Verify embeddings table exists
         let txn = client.begin().await.expect("Failed to begin transaction");

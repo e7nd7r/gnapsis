@@ -4,9 +4,9 @@ use crate::error::AppError;
 use crate::graph::{CypherExecutor, QueryExt, SqlExecutor};
 
 /// Ontology V2 data migration - migrate DocumentReference to CodeReference/TextReference.
-pub struct M005OntologyV2Data;
+pub struct M004OntologyV2Data;
 
-impl M005OntologyV2Data {
+impl M004OntologyV2Data {
     /// Apply the migration.
     pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
     where
