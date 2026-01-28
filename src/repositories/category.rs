@@ -1,18 +1,15 @@
 //! Category repository for managing classification categories.
 
-use std::sync::Arc;
-
-use neo4rs::{query, Graph, Row};
-
-use crate::context::Context;
+use crate::context::{AppGraph, Context};
 use crate::di::FromContext;
 use crate::error::AppError;
+use crate::graph::{Node, Row};
 use crate::models::{generate_ulid, Category, Scope};
 
 /// Repository for Category CRUD operations.
 #[derive(FromContext, Clone)]
 pub struct CategoryRepository {
-    graph: Arc<Graph>,
+    graph: AppGraph,
 }
 
 impl CategoryRepository {
@@ -26,21 +23,20 @@ impl CategoryRepository {
         let id = generate_ulid();
 
         self.graph
-            .run(
-                query(
-                    "MATCH (s:Scope {name: $scope})
-                     CREATE (c:Category {
-                         id: $id,
-                         name: $name,
-                         description: $description,
-                         created_at: datetime()
-                     })-[:IN_SCOPE]->(s)",
-                )
-                .param("id", id.clone())
-                .param("name", name)
-                .param("scope", scope.to_string())
-                .param("description", description),
+            .query(
+                "MATCH (s:Scope {name: $scope})
+                 CREATE (c:Category {
+                     id: $id,
+                     name: $name,
+                     description: $description,
+                     created_at: toString(datetime())
+                 })-[:IN_SCOPE]->(s)",
             )
+            .param("id", &id)
+            .param("name", name)
+            .param("scope", scope.to_string())
+            .param("description", description)
+            .run()
             .await?;
 
         Ok(Category {
@@ -53,21 +49,19 @@ impl CategoryRepository {
 
     /// Find a category by ID.
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Category>, AppError> {
-        let mut result = self
+        let row = self
             .graph
-            .execute(
-                query(
-                    "MATCH (c:Category {id: $id})-[:IN_SCOPE]->(s:Scope)
-                     RETURN c, s.name AS scope_name",
-                )
-                .param("id", id),
+            .query(
+                "MATCH (c:Category {id: $id})-[:IN_SCOPE]->(s:Scope)
+                 RETURN c, s.name AS scope_name",
             )
+            .param("id", id)
+            .fetch_one()
             .await?;
 
-        if let Some(row) = result.next().await? {
-            Ok(Some(Self::row_to_category(&row)?))
-        } else {
-            Ok(None)
+        match row {
+            Some(row) => Ok(Some(Self::row_to_category(&row)?)),
+            None => Ok(None),
         }
     }
 
@@ -77,114 +71,87 @@ impl CategoryRepository {
         name: &str,
         scope: Scope,
     ) -> Result<Option<Category>, AppError> {
-        let mut result = self
+        let row = self
             .graph
-            .execute(
-                query(
-                    "MATCH (c:Category {name: $name})-[:IN_SCOPE]->(s:Scope {name: $scope})
-                     RETURN c, s.name AS scope_name",
-                )
-                .param("name", name)
-                .param("scope", scope.to_string()),
+            .query(
+                "MATCH (c:Category {name: $name})-[:IN_SCOPE]->(s:Scope {name: $scope})
+                 RETURN c, s.name AS scope_name",
             )
+            .param("name", name)
+            .param("scope", scope.to_string())
+            .fetch_one()
             .await?;
 
-        if let Some(row) = result.next().await? {
-            Ok(Some(Self::row_to_category(&row)?))
-        } else {
-            Ok(None)
+        match row {
+            Some(row) => Ok(Some(Self::row_to_category(&row)?)),
+            None => Ok(None),
         }
     }
 
     /// List all categories.
     pub async fn list(&self) -> Result<Vec<Category>, AppError> {
-        let mut result = self
+        let rows = self
             .graph
-            .execute(query(
+            .query(
                 "MATCH (c:Category)-[:IN_SCOPE]->(s:Scope)
                  RETURN c, s.name AS scope_name
                  ORDER BY s.depth, c.name",
-            ))
+            )
+            .fetch_all()
             .await?;
 
-        let mut categories = Vec::new();
-        while let Some(row) = result.next().await? {
-            categories.push(Self::row_to_category(&row)?);
-        }
-        Ok(categories)
+        rows.iter().map(Self::row_to_category).collect()
     }
 
     /// List categories by scope.
     pub async fn list_by_scope(&self, scope: Scope) -> Result<Vec<Category>, AppError> {
-        let mut result = self
+        let rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (c:Category)-[:IN_SCOPE]->(s:Scope {name: $scope})
-                     RETURN c, s.name AS scope_name
-                     ORDER BY c.name",
-                )
-                .param("scope", scope.to_string()),
+            .query(
+                "MATCH (c:Category)-[:IN_SCOPE]->(s:Scope {name: $scope})
+                 RETURN c, s.name AS scope_name
+                 ORDER BY c.name",
             )
+            .param("scope", scope.to_string())
+            .fetch_all()
             .await?;
 
-        let mut categories = Vec::new();
-        while let Some(row) = result.next().await? {
-            categories.push(Self::row_to_category(&row)?);
-        }
-        Ok(categories)
+        rows.iter().map(Self::row_to_category).collect()
     }
 
     /// Delete a category by ID.
     pub async fn delete(&self, id: &str) -> Result<(), AppError> {
-        let mut result = self
+        let row = self
             .graph
-            .execute(
-                query(
-                    "MATCH (c:Category {id: $id})
-                     DETACH DELETE c
-                     RETURN count(*) AS deleted",
-                )
-                .param("id", id),
+            .query(
+                "MATCH (c:Category {id: $id})
+                 DETACH DELETE c
+                 RETURN count(*) AS deleted",
             )
+            .param("id", id)
+            .fetch_one()
             .await?;
 
-        if let Some(row) = result.next().await? {
-            let deleted: i64 = row.get("deleted").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "delete category".to_string(),
-            })?;
-            if deleted == 0 {
-                return Err(AppError::CategoryNotFound(id.to_string()));
+        match row {
+            Some(row) => {
+                let deleted: i64 = row.get("deleted")?;
+                if deleted == 0 {
+                    return Err(AppError::CategoryNotFound(id.to_string()));
+                }
+                Ok(())
             }
+            None => Err(AppError::CategoryNotFound(id.to_string())),
         }
-
-        Ok(())
     }
 
-    /// Convert a Neo4j row to a Category.
+    /// Convert a row to a Category.
     fn row_to_category(row: &Row) -> Result<Category, AppError> {
-        let node: neo4rs::Node = row.get("c").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "parse category node".to_string(),
-        })?;
+        let node: Node = row.get("c")?;
+        let scope_name: String = row.get("scope_name")?;
 
-        let scope_name: String = row.get("scope_name").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get scope name".to_string(),
-        })?;
-
-        let id: String = node.get("id").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get category id".to_string(),
-        })?;
-
-        let name: String = node.get("name").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get category name".to_string(),
-        })?;
-
-        let description: Option<String> = node.get("description").ok();
+        let id: String = node.get("id")?;
+        let name: String = node.get("name")?;
+        let description: Option<String> = node.get_opt("description")?;
 
         let scope = Self::parse_scope(&scope_name)?;
 

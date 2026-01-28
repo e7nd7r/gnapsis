@@ -88,6 +88,9 @@ use crate::graph::traits::{CypherExecutor, GraphClient, SqlExecutor, Transaction
 ///
 /// Provides connection pooling via deadpool-postgres and executes Cypher
 /// queries through the AGE extension.
+///
+/// This type is cheap to clone - the underlying connection pool is `Arc`-based.
+#[derive(Clone)]
 pub struct PostgresClient {
     pool: Pool,
     graph_name: Arc<str>,

@@ -1,13 +1,11 @@
 //! Validation service for checking graph integrity.
 
-use std::sync::Arc;
-
-use neo4rs::{query, Graph};
 use serde::Serialize;
 
-use crate::context::Context;
+use crate::context::{AppGraph, Context};
 use crate::di::FromContext;
 use crate::error::AppError;
+use crate::graph::Row;
 
 /// A validation issue with an entity.
 #[derive(Debug, Serialize)]
@@ -26,7 +24,7 @@ pub struct ValidationIssue {
 /// scope violations, and missing classifications.
 #[derive(FromContext, Clone)]
 pub struct ValidationService {
-    graph: Arc<Graph>,
+    graph: AppGraph,
 }
 
 impl ValidationService {
@@ -35,30 +33,18 @@ impl ValidationService {
     /// Entities at Domain scope are allowed to have no parent since they're
     /// at the top of the hierarchy. All other scopes should have a parent.
     pub async fn find_orphan_entities(&self) -> Result<Vec<ValidationIssue>, AppError> {
-        let mut result = self
+        let rows = self
             .graph
-            .execute(query(
+            .query(
                 "MATCH (e:Entity)-[:CLASSIFIED_AS]->(c:Category)-[:IN_SCOPE]->(s:Scope)
                  WHERE s.name <> 'Domain'
                  AND NOT (e)-[:BELONGS_TO]->(:Entity)
                  RETURN e.id AS id, e.name AS name, s.name AS scope",
-            ))
+            )
+            .fetch_all()
             .await?;
 
-        let mut issues = Vec::new();
-        while let Some(row) = result.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            let name: String = row.get("name").unwrap_or_default();
-            let scope: String = row.get("scope").unwrap_or_default();
-
-            issues.push(ValidationIssue {
-                entity_id: id,
-                entity_name: name,
-                issue: format!("Entity at {} scope has no parent", scope),
-            });
-        }
-
-        Ok(issues)
+        rows.iter().map(Self::row_to_orphan_issue).collect()
     }
 
     /// Find entities involved in BELONGS_TO cycles.
@@ -67,30 +53,19 @@ impl ValidationService {
     /// composition hierarchy, which is invalid.
     pub async fn find_cycles(&self) -> Result<Vec<ValidationIssue>, AppError> {
         // Use a path query to detect cycles - entities that can reach themselves
-        let mut result = self
+        let rows = self
             .graph
-            .execute(query(
+            .query(
                 "MATCH (e:Entity)
                  WHERE EXISTS {
                      MATCH path = (e)-[:BELONGS_TO*]->(e)
                  }
                  RETURN DISTINCT e.id AS id, e.name AS name",
-            ))
+            )
+            .fetch_all()
             .await?;
 
-        let mut issues = Vec::new();
-        while let Some(row) = result.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            let name: String = row.get("name").unwrap_or_default();
-
-            issues.push(ValidationIssue {
-                entity_id: id,
-                entity_name: name,
-                issue: "Entity is part of a BELONGS_TO cycle".to_string(),
-            });
-        }
-
-        Ok(issues)
+        rows.iter().map(Self::row_to_cycle_issue).collect()
     }
 
     /// Find scope violations where child scope is not deeper than parent.
@@ -98,9 +73,9 @@ impl ValidationService {
     /// The hierarchy flows: Domain(1) → Feature(2) → Namespace(3) → Component(4) → Unit(5)
     /// A child's scope depth must be greater than its parent's scope depth.
     pub async fn find_scope_violations(&self) -> Result<Vec<ValidationIssue>, AppError> {
-        let mut result = self
+        let rows = self
             .graph
-            .execute(query(
+            .query(
                 "MATCH (child:Entity)-[:BELONGS_TO]->(parent:Entity)
                  MATCH (child)-[:CLASSIFIED_AS]->(:Category)-[:IN_SCOPE]->(childScope:Scope)
                  MATCH (parent)-[:CLASSIFIED_AS]->(:Category)-[:IN_SCOPE]->(parentScope:Scope)
@@ -108,57 +83,28 @@ impl ValidationService {
                  RETURN child.id AS child_id, child.name AS child_name,
                         parent.id AS parent_id, parent.name AS parent_name,
                         childScope.name AS child_scope, parentScope.name AS parent_scope",
-            ))
+            )
+            .fetch_all()
             .await?;
 
-        let mut issues = Vec::new();
-        while let Some(row) = result.next().await? {
-            let child_id: String = row.get("child_id").unwrap_or_default();
-            let child_name: String = row.get("child_name").unwrap_or_default();
-            let parent_name: String = row.get("parent_name").unwrap_or_default();
-            let child_scope: String = row.get("child_scope").unwrap_or_default();
-            let parent_scope: String = row.get("parent_scope").unwrap_or_default();
-
-            let issue_msg = format!(
-                "Scope violation: {} ({}) belongs to {} ({}) - child must be deeper",
-                &child_name, child_scope, parent_name, parent_scope
-            );
-            issues.push(ValidationIssue {
-                entity_id: child_id,
-                entity_name: child_name,
-                issue: issue_msg,
-            });
-        }
-
-        Ok(issues)
+        rows.iter().map(Self::row_to_scope_violation).collect()
     }
 
     /// Find entities without any classification.
     ///
     /// All entities should be classified with at least one category.
     pub async fn find_unclassified_entities(&self) -> Result<Vec<ValidationIssue>, AppError> {
-        let mut result = self
+        let rows = self
             .graph
-            .execute(query(
+            .query(
                 "MATCH (e:Entity)
                  WHERE NOT (e)-[:CLASSIFIED_AS]->(:Category)
                  RETURN e.id AS id, e.name AS name",
-            ))
+            )
+            .fetch_all()
             .await?;
 
-        let mut issues = Vec::new();
-        while let Some(row) = result.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            let name: String = row.get("name").unwrap_or_default();
-
-            issues.push(ValidationIssue {
-                entity_id: id,
-                entity_name: name,
-                issue: "Entity has no classification".to_string(),
-            });
-        }
-
-        Ok(issues)
+        rows.iter().map(Self::row_to_unclassified_issue).collect()
     }
 
     /// Find entities without any document references.
@@ -167,28 +113,81 @@ impl ValidationService {
     /// or documentation. Entities without references are "floating knowledge"
     /// that can't be verified against the codebase.
     pub async fn find_entities_without_references(&self) -> Result<Vec<ValidationIssue>, AppError> {
-        let mut result = self
+        let rows = self
             .graph
-            .execute(query(
+            .query(
                 "MATCH (e:Entity)
                  WHERE NOT (e)-[:HAS_REFERENCE]->(:CodeReference)
                    AND NOT (e)-[:HAS_REFERENCE]->(:TextReference)
                  RETURN e.id AS id, e.name AS name",
-            ))
+            )
+            .fetch_all()
             .await?;
 
-        let mut issues = Vec::new();
-        while let Some(row) = result.next().await? {
-            let id: String = row.get("id").unwrap_or_default();
-            let name: String = row.get("name").unwrap_or_default();
+        rows.iter().map(Self::row_to_no_references_issue).collect()
+    }
 
-            issues.push(ValidationIssue {
-                entity_id: id,
-                entity_name: name,
-                issue: "Entity has no document references".to_string(),
-            });
-        }
+    // Row conversion helpers
 
-        Ok(issues)
+    fn row_to_orphan_issue(row: &Row) -> Result<ValidationIssue, AppError> {
+        let id: String = row.get_opt("id")?.unwrap_or_default();
+        let name: String = row.get_opt("name")?.unwrap_or_default();
+        let scope: String = row.get_opt("scope")?.unwrap_or_default();
+
+        Ok(ValidationIssue {
+            entity_id: id,
+            entity_name: name,
+            issue: format!("Entity at {} scope has no parent", scope),
+        })
+    }
+
+    fn row_to_cycle_issue(row: &Row) -> Result<ValidationIssue, AppError> {
+        let id: String = row.get_opt("id")?.unwrap_or_default();
+        let name: String = row.get_opt("name")?.unwrap_or_default();
+
+        Ok(ValidationIssue {
+            entity_id: id,
+            entity_name: name,
+            issue: "Entity is part of a BELONGS_TO cycle".to_string(),
+        })
+    }
+
+    fn row_to_scope_violation(row: &Row) -> Result<ValidationIssue, AppError> {
+        let child_id: String = row.get_opt("child_id")?.unwrap_or_default();
+        let child_name: String = row.get_opt("child_name")?.unwrap_or_default();
+        let parent_name: String = row.get_opt("parent_name")?.unwrap_or_default();
+        let child_scope: String = row.get_opt("child_scope")?.unwrap_or_default();
+        let parent_scope: String = row.get_opt("parent_scope")?.unwrap_or_default();
+
+        Ok(ValidationIssue {
+            entity_id: child_id,
+            entity_name: child_name.clone(),
+            issue: format!(
+                "Scope violation: {} ({}) belongs to {} ({}) - child must be deeper",
+                child_name, child_scope, parent_name, parent_scope
+            ),
+        })
+    }
+
+    fn row_to_unclassified_issue(row: &Row) -> Result<ValidationIssue, AppError> {
+        let id: String = row.get_opt("id")?.unwrap_or_default();
+        let name: String = row.get_opt("name")?.unwrap_or_default();
+
+        Ok(ValidationIssue {
+            entity_id: id,
+            entity_name: name,
+            issue: "Entity has no classification".to_string(),
+        })
+    }
+
+    fn row_to_no_references_issue(row: &Row) -> Result<ValidationIssue, AppError> {
+        let id: String = row.get_opt("id")?.unwrap_or_default();
+        let name: String = row.get_opt("name")?.unwrap_or_default();
+
+        Ok(ValidationIssue {
+            entity_id: id,
+            entity_name: name,
+            issue: "Entity has no document references".to_string(),
+        })
     }
 }

@@ -4,13 +4,10 @@
 //! - `CodeReference` - For source code with LSP metadata
 //! - `TextReference` - For markdown/text with line ranges and anchors
 
-use std::sync::Arc;
-
-use neo4rs::{query, Graph, Row};
-
-use crate::context::Context;
+use crate::context::{AppGraph, Context};
 use crate::di::FromContext;
 use crate::error::AppError;
+use crate::graph::{Node, Row};
 use crate::models::{generate_ulid, CodeReference, Document, Reference, TextReference};
 
 /// Parameters for creating a code reference.
@@ -62,14 +59,7 @@ pub struct UpdateTextReferenceParams<'a> {
 /// Repository for Document and Reference operations.
 #[derive(FromContext, Clone)]
 pub struct DocumentRepository {
-    graph: Arc<Graph>,
-}
-
-impl DocumentRepository {
-    /// Get access to the graph for custom queries.
-    pub fn graph(&self) -> &Graph {
-        &self.graph
-    }
+    graph: AppGraph,
 }
 
 impl DocumentRepository {
@@ -85,42 +75,41 @@ impl DocumentRepository {
     ) -> Result<Document, AppError> {
         let id = generate_ulid();
 
-        let mut result = self
+        let row = self
             .graph
-            .execute(
-                query(
-                    "MERGE (d:Document {path: $path})
-                     ON CREATE SET d.id = $id, d.created_at = datetime()
-                     SET d.content_hash = $content_hash, d.updated_at = datetime()
-                     RETURN d",
-                )
-                .param("id", id)
-                .param("path", path)
-                .param("content_hash", content_hash),
+            .query(
+                "MERGE (d:Document {path: $path})
+                 ON CREATE SET d.id = $id, d.created_at = toString(datetime())
+                 SET d.content_hash = $content_hash, d.updated_at = toString(datetime())
+                 RETURN d",
             )
+            .param("id", &id)
+            .param("path", path)
+            .param("content_hash", content_hash)
+            .fetch_one()
             .await?;
 
-        if let Some(row) = result.next().await? {
-            Self::row_to_document(&row)
-        } else {
-            Err(AppError::Query {
+        match row {
+            Some(row) => Self::row_to_document(&row),
+            None => Err(AppError::Query {
                 message: "Failed to upsert document".to_string(),
                 query: "upsert_document".to_string(),
-            })
+            }),
         }
     }
 
     /// Find a document by path.
     pub async fn find_document_by_path(&self, path: &str) -> Result<Option<Document>, AppError> {
-        let mut result = self
+        let row = self
             .graph
-            .execute(query("MATCH (d:Document {path: $path}) RETURN d").param("path", path))
+            .query("MATCH (d:Document {path: $path}) RETURN d")
+            .param("path", path)
+            .fetch_one()
             .await?;
 
-        if let Some(row) = result.next().await? {
-            Ok(Some(Self::row_to_document(&row)?))
-        } else {
-            Ok(None)
+        match row {
+            Some(row) => Ok(Some(Self::row_to_document(&row)?)),
+            None => Ok(None),
         }
     }
 
@@ -135,43 +124,42 @@ impl DocumentRepository {
     ) -> Result<CodeReference, AppError> {
         let id = generate_ulid();
 
-        let embedding_param: Option<Vec<f64>> = params
+        let embedding_json = params
             .embedding
-            .map(|e| e.iter().map(|&f| f as f64).collect());
+            .map(|e| serde_json::to_value(e).unwrap_or_default());
 
         self.graph
-            .run(
-                query(
-                    "MATCH (e:Entity {id: $entity_id})
-                     MERGE (d:Document {path: $path})
-                     ON CREATE SET d.id = $doc_id, d.content_hash = '', d.created_at = datetime()
-                     CREATE (ref:CodeReference {
-                         id: $id,
-                         path: $path,
-                         language: $language,
-                         commit_sha: $commit_sha,
-                         description: $description,
-                         embedding: $embedding,
-                         lsp_symbol: $lsp_symbol,
-                         lsp_kind: $lsp_kind,
-                         lsp_range: $lsp_range,
-                         created_at: datetime()
-                     })
-                     CREATE (e)-[:HAS_REFERENCE]->(ref)
-                     CREATE (ref)-[:IN_DOCUMENT]->(d)",
-                )
-                .param("id", id.clone())
-                .param("doc_id", generate_ulid())
-                .param("entity_id", params.entity_id)
-                .param("path", params.path)
-                .param("language", params.language)
-                .param("commit_sha", params.commit_sha)
-                .param("description", params.description)
-                .param("embedding", embedding_param)
-                .param("lsp_symbol", params.lsp_symbol)
-                .param("lsp_kind", params.lsp_kind as i64)
-                .param("lsp_range", params.lsp_range),
+            .query(
+                "MATCH (e:Entity {id: $entity_id})
+                 MERGE (d:Document {path: $path})
+                 ON CREATE SET d.id = $doc_id, d.content_hash = '', d.created_at = toString(datetime())
+                 CREATE (ref:CodeReference {
+                     id: $id,
+                     path: $path,
+                     language: $language,
+                     commit_sha: $commit_sha,
+                     description: $description,
+                     embedding: $embedding,
+                     lsp_symbol: $lsp_symbol,
+                     lsp_kind: $lsp_kind,
+                     lsp_range: $lsp_range,
+                     created_at: toString(datetime())
+                 })
+                 CREATE (e)-[:HAS_REFERENCE]->(ref)
+                 CREATE (ref)-[:IN_DOCUMENT]->(d)",
             )
+            .param("id", &id)
+            .param("doc_id", generate_ulid())
+            .param("entity_id", params.entity_id)
+            .param("path", params.path)
+            .param("language", params.language)
+            .param("commit_sha", params.commit_sha)
+            .param("description", params.description)
+            .param_raw("embedding", embedding_json.unwrap_or(serde_json::Value::Null))
+            .param("lsp_symbol", params.lsp_symbol)
+            .param("lsp_kind", params.lsp_kind as i64)
+            .param("lsp_range", params.lsp_range)
+            .run()
             .await?;
 
         Ok(CodeReference {
@@ -193,28 +181,30 @@ impl DocumentRepository {
         id: &str,
         params: UpdateCodeReferenceParams<'_>,
     ) -> Result<(), AppError> {
-        let embedding_param: Option<Vec<f64>> = params
+        let embedding_json = params
             .embedding
-            .map(|e| e.iter().map(|&f| f as f64).collect());
+            .map(|e| serde_json::to_value(e).unwrap_or_default());
 
         self.graph
-            .run(
-                query(
-                    "MATCH (ref:CodeReference {id: $id})
-                     SET ref.commit_sha = coalesce($commit_sha, ref.commit_sha),
-                         ref.embedding = coalesce($embedding, ref.embedding),
-                         ref.lsp_symbol = coalesce($lsp_symbol, ref.lsp_symbol),
-                         ref.lsp_kind = coalesce($lsp_kind, ref.lsp_kind),
-                         ref.lsp_range = coalesce($lsp_range, ref.lsp_range),
-                         ref.updated_at = datetime()",
-                )
-                .param("id", id)
-                .param("commit_sha", params.commit_sha)
-                .param("embedding", embedding_param)
-                .param("lsp_symbol", params.lsp_symbol)
-                .param("lsp_kind", params.lsp_kind.map(|k| k as i64))
-                .param("lsp_range", params.lsp_range),
+            .query(
+                "MATCH (ref:CodeReference {id: $id})
+                 SET ref.commit_sha = coalesce($commit_sha, ref.commit_sha),
+                     ref.embedding = coalesce($embedding, ref.embedding),
+                     ref.lsp_symbol = coalesce($lsp_symbol, ref.lsp_symbol),
+                     ref.lsp_kind = coalesce($lsp_kind, ref.lsp_kind),
+                     ref.lsp_range = coalesce($lsp_range, ref.lsp_range),
+                     ref.updated_at = toString(datetime())",
             )
+            .param("id", id)
+            .param("commit_sha", params.commit_sha)
+            .param_raw(
+                "embedding",
+                embedding_json.unwrap_or(serde_json::Value::Null),
+            )
+            .param("lsp_symbol", params.lsp_symbol)
+            .param("lsp_kind", params.lsp_kind.map(|k| k as i64))
+            .param("lsp_range", params.lsp_range)
+            .run()
             .await?;
 
         Ok(())
@@ -231,43 +221,42 @@ impl DocumentRepository {
     ) -> Result<TextReference, AppError> {
         let id = generate_ulid();
 
-        let embedding_param: Option<Vec<f64>> = params
+        let embedding_json = params
             .embedding
-            .map(|e| e.iter().map(|&f| f as f64).collect());
+            .map(|e| serde_json::to_value(e).unwrap_or_default());
 
         self.graph
-            .run(
-                query(
-                    "MATCH (e:Entity {id: $entity_id})
-                     MERGE (d:Document {path: $path})
-                     ON CREATE SET d.id = $doc_id, d.content_hash = '', d.created_at = datetime()
-                     CREATE (ref:TextReference {
-                         id: $id,
-                         path: $path,
-                         content_type: $content_type,
-                         commit_sha: $commit_sha,
-                         description: $description,
-                         embedding: $embedding,
-                         start_line: $start_line,
-                         end_line: $end_line,
-                         anchor: $anchor,
-                         created_at: datetime()
-                     })
-                     CREATE (e)-[:HAS_REFERENCE]->(ref)
-                     CREATE (ref)-[:IN_DOCUMENT]->(d)",
-                )
-                .param("id", id.clone())
-                .param("doc_id", generate_ulid())
-                .param("entity_id", params.entity_id)
-                .param("path", params.path)
-                .param("content_type", params.content_type)
-                .param("commit_sha", params.commit_sha)
-                .param("description", params.description)
-                .param("embedding", embedding_param)
-                .param("start_line", params.start_line as i64)
-                .param("end_line", params.end_line as i64)
-                .param("anchor", params.anchor),
+            .query(
+                "MATCH (e:Entity {id: $entity_id})
+                 MERGE (d:Document {path: $path})
+                 ON CREATE SET d.id = $doc_id, d.content_hash = '', d.created_at = toString(datetime())
+                 CREATE (ref:TextReference {
+                     id: $id,
+                     path: $path,
+                     content_type: $content_type,
+                     commit_sha: $commit_sha,
+                     description: $description,
+                     embedding: $embedding,
+                     start_line: $start_line,
+                     end_line: $end_line,
+                     anchor: $anchor,
+                     created_at: toString(datetime())
+                 })
+                 CREATE (e)-[:HAS_REFERENCE]->(ref)
+                 CREATE (ref)-[:IN_DOCUMENT]->(d)",
             )
+            .param("id", &id)
+            .param("doc_id", generate_ulid())
+            .param("entity_id", params.entity_id)
+            .param("path", params.path)
+            .param("content_type", params.content_type)
+            .param("commit_sha", params.commit_sha)
+            .param("description", params.description)
+            .param_raw("embedding", embedding_json.unwrap_or(serde_json::Value::Null))
+            .param("start_line", params.start_line as i64)
+            .param("end_line", params.end_line as i64)
+            .param("anchor", params.anchor)
+            .run()
             .await?;
 
         Ok(TextReference {
@@ -289,28 +278,30 @@ impl DocumentRepository {
         id: &str,
         params: UpdateTextReferenceParams<'_>,
     ) -> Result<(), AppError> {
-        let embedding_param: Option<Vec<f64>> = params
+        let embedding_json = params
             .embedding
-            .map(|e| e.iter().map(|&f| f as f64).collect());
+            .map(|e| serde_json::to_value(e).unwrap_or_default());
 
         self.graph
-            .run(
-                query(
-                    "MATCH (ref:TextReference {id: $id})
-                     SET ref.commit_sha = coalesce($commit_sha, ref.commit_sha),
-                         ref.embedding = coalesce($embedding, ref.embedding),
-                         ref.start_line = coalesce($start_line, ref.start_line),
-                         ref.end_line = coalesce($end_line, ref.end_line),
-                         ref.anchor = coalesce($anchor, ref.anchor),
-                         ref.updated_at = datetime()",
-                )
-                .param("id", id)
-                .param("commit_sha", params.commit_sha)
-                .param("embedding", embedding_param)
-                .param("start_line", params.start_line.map(|l| l as i64))
-                .param("end_line", params.end_line.map(|l| l as i64))
-                .param("anchor", params.anchor),
+            .query(
+                "MATCH (ref:TextReference {id: $id})
+                 SET ref.commit_sha = coalesce($commit_sha, ref.commit_sha),
+                     ref.embedding = coalesce($embedding, ref.embedding),
+                     ref.start_line = coalesce($start_line, ref.start_line),
+                     ref.end_line = coalesce($end_line, ref.end_line),
+                     ref.anchor = coalesce($anchor, ref.anchor),
+                     ref.updated_at = toString(datetime())",
             )
+            .param("id", id)
+            .param("commit_sha", params.commit_sha)
+            .param_raw(
+                "embedding",
+                embedding_json.unwrap_or(serde_json::Value::Null),
+            )
+            .param("start_line", params.start_line.map(|l| l as i64))
+            .param("end_line", params.end_line.map(|l| l as i64))
+            .param("anchor", params.anchor)
+            .run()
             .await?;
 
         Ok(())
@@ -323,22 +314,26 @@ impl DocumentRepository {
     /// Find a reference by ID (either CodeReference or TextReference).
     pub async fn find_reference_by_id(&self, id: &str) -> Result<Option<Reference>, AppError> {
         // Try CodeReference first
-        let mut code_result = self
+        let code_row = self
             .graph
-            .execute(query("MATCH (ref:CodeReference {id: $id}) RETURN ref").param("id", id))
+            .query("MATCH (ref:CodeReference {id: $id}) RETURN ref")
+            .param("id", id)
+            .fetch_one()
             .await?;
 
-        if let Some(row) = code_result.next().await? {
+        if let Some(row) = code_row {
             return Ok(Some(Reference::Code(Self::row_to_code_reference(&row)?)));
         }
 
         // Try TextReference
-        let mut text_result = self
+        let text_row = self
             .graph
-            .execute(query("MATCH (ref:TextReference {id: $id}) RETURN ref").param("id", id))
+            .query("MATCH (ref:TextReference {id: $id}) RETURN ref")
+            .param("id", id)
+            .fetch_one()
             .await?;
 
-        if let Some(row) = text_result.next().await? {
+        if let Some(row) = text_row {
             return Ok(Some(Reference::Text(Self::row_to_text_reference(&row)?)));
         }
 
@@ -352,18 +347,17 @@ impl DocumentRepository {
         reference_id: &str,
     ) -> Result<(), AppError> {
         self.graph
-            .run(
-                query(
-                    "MATCH (e:Entity {id: $entity_id})
-                     OPTIONAL MATCH (code:CodeReference {id: $ref_id})
-                     OPTIONAL MATCH (text:TextReference {id: $ref_id})
-                     WITH e, coalesce(code, text) AS ref
-                     WHERE ref IS NOT NULL
-                     MERGE (e)-[:HAS_REFERENCE]->(ref)",
-                )
-                .param("entity_id", entity_id)
-                .param("ref_id", reference_id),
+            .query(
+                "MATCH (e:Entity {id: $entity_id})
+                 OPTIONAL MATCH (code:CodeReference {id: $ref_id})
+                 OPTIONAL MATCH (text:TextReference {id: $ref_id})
+                 WITH e, coalesce(code, text) AS ref
+                 WHERE ref IS NOT NULL
+                 MERGE (e)-[:HAS_REFERENCE]->(ref)",
             )
+            .param("entity_id", entity_id)
+            .param("ref_id", reference_id)
+            .run()
             .await?;
         Ok(())
     }
@@ -375,15 +369,14 @@ impl DocumentRepository {
         reference_id: &str,
     ) -> Result<(), AppError> {
         self.graph
-            .run(
-                query(
-                    "MATCH (e:Entity {id: $entity_id})-[r:HAS_REFERENCE]->(ref)
-                     WHERE ref.id = $ref_id
-                     DELETE r",
-                )
-                .param("entity_id", entity_id)
-                .param("ref_id", reference_id),
+            .query(
+                "MATCH (e:Entity {id: $entity_id})-[r:HAS_REFERENCE]->(ref)
+                 WHERE ref.id = $ref_id
+                 DELETE r",
             )
+            .param("entity_id", entity_id)
+            .param("ref_id", reference_id)
+            .run()
             .await?;
         Ok(())
     }
@@ -391,16 +384,15 @@ impl DocumentRepository {
     /// Delete a reference (works for both CodeReference and TextReference).
     pub async fn delete_reference(&self, id: &str) -> Result<(), AppError> {
         self.graph
-            .run(
-                query(
-                    "OPTIONAL MATCH (ref:CodeReference {id: $id})
-                     OPTIONAL MATCH (ref2:TextReference {id: $id})
-                     WITH coalesce(ref, ref2) AS r
-                     WHERE r IS NOT NULL
-                     DETACH DELETE r",
-                )
-                .param("id", id),
+            .query(
+                "OPTIONAL MATCH (ref:CodeReference {id: $id})
+                 OPTIONAL MATCH (ref2:TextReference {id: $id})
+                 WITH coalesce(ref, ref2) AS r
+                 WHERE r IS NOT NULL
+                 DETACH DELETE r",
             )
+            .param("id", id)
+            .run()
             .await?;
         Ok(())
     }
@@ -410,37 +402,35 @@ impl DocumentRepository {
         let mut references = Vec::new();
 
         // Get CodeReferences
-        let mut code_result = self
+        let code_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity {id: $id})-[:HAS_REFERENCE]->(ref:CodeReference)
-                     RETURN ref
-                     ORDER BY ref.path, ref.lsp_symbol",
-                )
-                .param("id", entity_id),
+            .query(
+                "MATCH (e:Entity {id: $id})-[:HAS_REFERENCE]->(ref:CodeReference)
+                 RETURN ref
+                 ORDER BY ref.path, ref.lsp_symbol",
             )
+            .param("id", entity_id)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = code_result.next().await? {
-            references.push(Reference::Code(Self::row_to_code_reference(&row)?));
+        for row in &code_rows {
+            references.push(Reference::Code(Self::row_to_code_reference(row)?));
         }
 
         // Get TextReferences
-        let mut text_result = self
+        let text_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (e:Entity {id: $id})-[:HAS_REFERENCE]->(ref:TextReference)
-                     RETURN ref
-                     ORDER BY ref.path, ref.start_line",
-                )
-                .param("id", entity_id),
+            .query(
+                "MATCH (e:Entity {id: $id})-[:HAS_REFERENCE]->(ref:TextReference)
+                 RETURN ref
+                 ORDER BY ref.path, ref.start_line",
             )
+            .param("id", entity_id)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = text_result.next().await? {
-            references.push(Reference::Text(Self::row_to_text_reference(&row)?));
+        for row in &text_rows {
+            references.push(Reference::Text(Self::row_to_text_reference(row)?));
         }
 
         Ok(references)
@@ -454,37 +444,35 @@ impl DocumentRepository {
         let mut references = Vec::new();
 
         // Get CodeReferences
-        let mut code_result = self
+        let code_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (ref:CodeReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
-                     RETURN ref
-                     ORDER BY ref.lsp_symbol",
-                )
-                .param("path", document_path),
+            .query(
+                "MATCH (ref:CodeReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
+                 RETURN ref
+                 ORDER BY ref.lsp_symbol",
             )
+            .param("path", document_path)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = code_result.next().await? {
-            references.push(Reference::Code(Self::row_to_code_reference(&row)?));
+        for row in &code_rows {
+            references.push(Reference::Code(Self::row_to_code_reference(row)?));
         }
 
         // Get TextReferences
-        let mut text_result = self
+        let text_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (ref:TextReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
-                     RETURN ref
-                     ORDER BY ref.start_line",
-                )
-                .param("path", document_path),
+            .query(
+                "MATCH (ref:TextReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
+                 RETURN ref
+                 ORDER BY ref.start_line",
             )
+            .param("path", document_path)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = text_result.next().await? {
-            references.push(Reference::Text(Self::row_to_text_reference(&row)?));
+        for row in &text_rows {
+            references.push(Reference::Text(Self::row_to_text_reference(row)?));
         }
 
         Ok(references)
@@ -498,36 +486,55 @@ impl DocumentRepository {
         &self,
         reference_id: &str,
     ) -> Result<Vec<(String, String)>, AppError> {
-        let mut entities = Vec::new();
-
-        // Query entities attached to either CodeReference or TextReference
-        let mut result = self
+        let rows = self
             .graph
-            .execute(
-                query(
-                    "OPTIONAL MATCH (e:Entity)-[:HAS_REFERENCE]->(code:CodeReference {id: $id})
-                     OPTIONAL MATCH (e2:Entity)-[:HAS_REFERENCE]->(text:TextReference {id: $id})
-                     WITH coalesce(e, e2) AS entity
-                     WHERE entity IS NOT NULL
-                     RETURN entity.id AS id, entity.name AS name",
-                )
-                .param("id", reference_id),
+            .query(
+                "OPTIONAL MATCH (e:Entity)-[:HAS_REFERENCE]->(code:CodeReference {id: $id})
+                 OPTIONAL MATCH (e2:Entity)-[:HAS_REFERENCE]->(text:TextReference {id: $id})
+                 WITH coalesce(e, e2) AS entity
+                 WHERE entity IS NOT NULL
+                 RETURN entity.id AS id, entity.name AS name",
             )
+            .param("id", reference_id)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = result.next().await? {
-            let id: String = row.get("id").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get_attached_entities".to_string(),
-            })?;
-            let name: String = row.get("name").map_err(|e| AppError::Query {
-                message: e.to_string(),
-                query: "get_attached_entities".to_string(),
-            })?;
+        let mut entities = Vec::new();
+        for row in &rows {
+            let id: String = row.get("id")?;
+            let name: String = row.get("name")?;
             entities.push((id, name));
         }
 
         Ok(entities)
+    }
+
+    /// Get entity info for all references in a document.
+    ///
+    /// Returns a list of (entity_id, entity_name, reference_id) tuples.
+    pub async fn get_document_entity_references(
+        &self,
+        document_path: &str,
+    ) -> Result<Vec<(String, String, String)>, AppError> {
+        let rows = self
+            .graph
+            .query(
+                "MATCH (e:Entity)-[:HAS_REFERENCE]->(ref)-[:IN_DOCUMENT]->(d:Document {path: $path})
+                 RETURN e.id AS entity_id, e.name AS entity_name, ref.id AS reference_id",
+            )
+            .param("path", document_path)
+            .fetch_all()
+            .await?;
+
+        let mut results = Vec::new();
+        for row in &rows {
+            let entity_id: String = row.get("entity_id")?;
+            let entity_name: String = row.get("entity_name")?;
+            let reference_id: String = row.get("reference_id")?;
+            results.push((entity_id, entity_name, reference_id));
+        }
+
+        Ok(results)
     }
 
     /// Get stale references (references with old commit SHA).
@@ -539,83 +546,95 @@ impl DocumentRepository {
         let mut references = Vec::new();
 
         // Get stale CodeReferences
-        let mut code_result = self
+        let code_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (ref:CodeReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
-                     WHERE ref.commit_sha <> $commit
-                     RETURN ref
-                     ORDER BY ref.lsp_symbol",
-                )
-                .param("path", document_path)
-                .param("commit", current_commit),
+            .query(
+                "MATCH (ref:CodeReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
+                 WHERE ref.commit_sha <> $commit
+                 RETURN ref
+                 ORDER BY ref.lsp_symbol",
             )
+            .param("path", document_path)
+            .param("commit", current_commit)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = code_result.next().await? {
-            references.push(Reference::Code(Self::row_to_code_reference(&row)?));
+        for row in &code_rows {
+            references.push(Reference::Code(Self::row_to_code_reference(row)?));
         }
 
         // Get stale TextReferences
-        let mut text_result = self
+        let text_rows = self
             .graph
-            .execute(
-                query(
-                    "MATCH (ref:TextReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
-                     WHERE ref.commit_sha <> $commit
-                     RETURN ref
-                     ORDER BY ref.start_line",
-                )
-                .param("path", document_path)
-                .param("commit", current_commit),
+            .query(
+                "MATCH (ref:TextReference)-[:IN_DOCUMENT]->(d:Document {path: $path})
+                 WHERE ref.commit_sha <> $commit
+                 RETURN ref
+                 ORDER BY ref.start_line",
             )
+            .param("path", document_path)
+            .param("commit", current_commit)
+            .fetch_all()
             .await?;
 
-        while let Some(row) = text_result.next().await? {
-            references.push(Reference::Text(Self::row_to_text_reference(&row)?));
+        for row in &text_rows {
+            references.push(Reference::Text(Self::row_to_text_reference(row)?));
         }
 
         Ok(references)
     }
 
     // ============================================
-    // Row conversion helpers (using serde)
+    // Row conversion helpers
     // ============================================
 
     fn row_to_document(row: &Row) -> Result<Document, AppError> {
-        let node: neo4rs::Node = row.get("d").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "parse document node".to_string(),
-        })?;
+        let node: Node = row.get("d")?;
 
-        node.to::<Document>().map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "deserialize document".to_string(),
+        Ok(Document {
+            id: node.get("id")?,
+            path: node.get("path")?,
+            content_hash: node.get_opt("content_hash")?.unwrap_or_default(),
         })
     }
 
     fn row_to_code_reference(row: &Row) -> Result<CodeReference, AppError> {
-        let node: neo4rs::Node = row.get("ref").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "parse code reference node".to_string(),
-        })?;
+        let node: Node = row.get("ref")?;
 
-        node.to::<CodeReference>().map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "deserialize code reference".to_string(),
+        let embedding: Option<Vec<f64>> = node.get_opt("embedding")?;
+        let embedding = embedding.map(|e| e.iter().map(|&f| f as f32).collect());
+
+        Ok(CodeReference {
+            id: node.get("id")?,
+            path: node.get("path")?,
+            language: node.get_opt("language")?.unwrap_or_default(),
+            commit_sha: node.get_opt("commit_sha")?.unwrap_or_default(),
+            description: node.get_opt("description")?.unwrap_or_default(),
+            embedding,
+            lsp_symbol: node.get_opt("lsp_symbol")?.unwrap_or_default(),
+            lsp_kind: node.get_opt::<i64>("lsp_kind")?.unwrap_or(0) as i32,
+            lsp_range: node.get_opt("lsp_range")?.unwrap_or_default(),
         })
     }
 
     fn row_to_text_reference(row: &Row) -> Result<TextReference, AppError> {
-        let node: neo4rs::Node = row.get("ref").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "parse text reference node".to_string(),
-        })?;
+        let node: Node = row.get("ref")?;
 
-        node.to::<TextReference>().map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "deserialize text reference".to_string(),
+        let embedding: Option<Vec<f64>> = node.get_opt("embedding")?;
+        let embedding = embedding.map(|e| e.iter().map(|&f| f as f32).collect());
+
+        Ok(TextReference {
+            id: node.get("id")?,
+            path: node.get("path")?,
+            content_type: node
+                .get_opt("content_type")?
+                .unwrap_or_else(|| "markdown".to_string()),
+            commit_sha: node.get_opt("commit_sha")?.unwrap_or_default(),
+            description: node.get_opt("description")?.unwrap_or_default(),
+            embedding,
+            start_line: node.get_opt::<i64>("start_line")?.unwrap_or(0) as u32,
+            end_line: node.get_opt::<i64>("end_line")?.unwrap_or(0) as u32,
+            anchor: node.get_opt("anchor")?,
         })
     }
 }

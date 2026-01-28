@@ -11,16 +11,14 @@
 //! depending on what each migration needs.
 
 mod m001_schema;
-mod m002_triggers;
-mod m003_seed_data;
-mod m004_ontology_v2;
-mod m005_ontology_v2_data;
+mod m002_seed_data;
+mod m003_ontology_v2;
+mod m004_ontology_v2_data;
 
 pub use m001_schema::M001Schema;
-pub use m002_triggers::M002Triggers;
-pub use m003_seed_data::M003SeedData;
-pub use m004_ontology_v2::M004OntologyV2;
-pub use m005_ontology_v2_data::M005OntologyV2Data;
+pub use m002_seed_data::M002SeedData;
+pub use m003_ontology_v2::M003OntologyV2;
+pub use m004_ontology_v2_data::M004OntologyV2Data;
 
 use crate::error::AppError;
 use crate::graph::{CypherExecutor, GraphClient, SqlExecutor, Transaction};
@@ -48,23 +46,18 @@ const MIGRATIONS: &[MigrationEntry] = &[
         description: "Schema setup (graph creation, indexes)",
     },
     MigrationEntry {
-        id: "m002_triggers",
+        id: "m002_seed_data",
         version: 2,
-        description: "PostgreSQL triggers for domain constraints",
-    },
-    MigrationEntry {
-        id: "m003_seed_data",
-        version: 3,
         description: "Seed data (scopes and default categories)",
     },
     MigrationEntry {
-        id: "m004_ontology_v2",
-        version: 4,
+        id: "m003_ontology_v2",
+        version: 3,
         description: "Ontology V2 schema (CodeReference and TextReference indexes)",
     },
     MigrationEntry {
-        id: "m005_ontology_v2_data",
-        version: 5,
+        id: "m004_ontology_v2_data",
+        version: 4,
         description: "Migrate DocumentReference nodes to CodeReference/TextReference",
     },
 ];
@@ -83,10 +76,9 @@ where
 {
     match id {
         "m001_schema" => M001Schema.up(txn).await,
-        "m002_triggers" => M002Triggers.up(txn).await,
-        "m003_seed_data" => M003SeedData.up(txn).await,
-        "m004_ontology_v2" => M004OntologyV2.up(txn).await,
-        "m005_ontology_v2_data" => M005OntologyV2Data.up(txn).await,
+        "m002_seed_data" => M002SeedData.up(txn).await,
+        "m003_ontology_v2" => M003OntologyV2.up(txn).await,
+        "m004_ontology_v2_data" => M004OntologyV2Data.up(txn).await,
         _ => Err(AppError::Internal(format!("Unknown migration: {}", id))),
     }
 }

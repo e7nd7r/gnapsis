@@ -4,9 +4,9 @@ use crate::error::AppError;
 use crate::graph::{CypherExecutor, SqlExecutor};
 
 /// Ontology V2 schema migration - indexes for new reference types.
-pub struct M004OntologyV2;
+pub struct M003OntologyV2;
 
-impl M004OntologyV2 {
+impl M003OntologyV2 {
     /// Apply the migration.
     pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
     where

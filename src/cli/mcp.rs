@@ -1,13 +1,14 @@
 //! MCP server command handler.
 
 use color_eyre::Result;
-use neo4rs::Graph;
 use raggy::embeddings::{FastEmbedConfig, FastEmbedModel, ProviderConfig};
 use raggy::{Embedder, EmbeddingProvider, FastEmbedProvider};
 use rmcp::ServiceExt;
 
 use crate::config::Config;
 use crate::context::Context;
+use crate::graph::backends::postgres::PostgresClient;
+use crate::graph::Graph;
 use crate::mcp::McpServer;
 
 use super::App;
@@ -24,15 +25,12 @@ impl App {
             config.project.name
         );
 
-        // Connect to Neo4j
-        tracing::debug!("Connecting to Neo4j at {}", config.neo4j.uri);
-        let graph = Graph::new(
-            &config.neo4j.uri,
-            &config.neo4j.user,
-            config.neo4j.password.as_deref().unwrap_or(""),
-        )
-        .await?;
-        tracing::debug!("Connected to Neo4j");
+        // Connect to PostgreSQL + Apache AGE
+        tracing::debug!("Connecting to PostgreSQL at {}", config.postgres.uri);
+        let client =
+            PostgresClient::connect(&config.postgres.uri, &config.postgres.graph_name).await?;
+        let graph = Graph::new(client);
+        tracing::debug!("Connected to PostgreSQL + AGE");
 
         // Initialize embedding provider
         tracing::debug!(

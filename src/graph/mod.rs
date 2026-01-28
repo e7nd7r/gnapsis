@@ -52,7 +52,7 @@
 mod cypher;
 mod macros;
 mod query;
-mod row;
+pub mod row;
 mod traits;
 
 pub mod backends;
@@ -97,11 +97,12 @@ use crate::error::AppError;
 ///     Ok(())
 /// }).await?;
 /// ```
-pub struct Graph<C: GraphClient> {
+#[derive(Clone)]
+pub struct Graph<C: GraphClient + Clone> {
     client: C,
 }
 
-impl<C: GraphClient> Graph<C> {
+impl<C: GraphClient + Clone> Graph<C> {
     /// Creates a new graph wrapper around the given client.
     pub fn new(client: C) -> Self {
         Self { client }
@@ -167,7 +168,7 @@ impl<C: GraphClient> Graph<C> {
 
 // Forward CypherExecutor to the underlying client for convenience
 #[async_trait::async_trait]
-impl<C: GraphClient> CypherExecutor for Graph<C> {
+impl<C: GraphClient + Clone> CypherExecutor for Graph<C> {
     async fn execute_cypher(
         &self,
         cypher: &str,
