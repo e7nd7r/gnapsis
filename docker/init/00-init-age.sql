@@ -1,7 +1,10 @@
--- Initialize Apache AGE extension and create the knowledge graph
+-- Initialize Apache AGE and pgvector extensions
 
 -- Load the AGE extension
 CREATE EXTENSION IF NOT EXISTS age;
+
+-- Load the pgvector extension for embeddings
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Set search path for AGE
 LOAD 'age';

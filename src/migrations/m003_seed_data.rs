@@ -1,56 +1,41 @@
 //! Seed data migration - scopes and default categories.
 
-use async_trait::async_trait;
-use neo4rs::{query, Txn};
-
 use crate::error::AppError;
+use crate::graph::{CypherExecutor, QueryExt, SqlExecutor};
 use crate::models::{generate_ulid, Scope};
-
-use super::Migration;
 
 /// Seed data migration (scopes and categories).
 pub struct M003SeedData;
 
-#[async_trait]
-impl Migration for M003SeedData {
-    fn id(&self) -> &'static str {
-        "m003_seed_data"
-    }
-
-    fn version(&self) -> u32 {
-        3
-    }
-
-    fn description(&self) -> &'static str {
-        "Seed data (scopes and default categories)"
-    }
-
-    async fn up(&self, txn: &mut Txn) -> Result<(), AppError> {
+impl M003SeedData {
+    /// Apply the migration.
+    pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
+    where
+        T: CypherExecutor + SqlExecutor + Sync,
+    {
         self.create_scopes(txn).await?;
         self.create_default_categories(txn).await?;
+        self.attach_triggers(txn).await?;
         Ok(())
     }
-}
 
-impl M003SeedData {
     /// Create Scope nodes with the fixed hierarchy.
-    async fn create_scopes(&self, txn: &mut Txn) -> Result<(), AppError> {
+    async fn create_scopes<T: CypherExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
         // Create each scope node
         for scope in Scope::all() {
-            txn.run(
-                query(
-                    "MERGE (s:Scope {name: $name})
-                     SET s.depth = $depth, s.description = $description",
-                )
-                .param("name", scope.to_string())
-                .param("depth", scope.depth() as i64)
-                .param("description", scope.description()),
+            txn.query(
+                "MERGE (s:Scope {name: $name})
+                 SET s.depth = $depth, s.description = $description",
             )
+            .param("name", scope.to_string())
+            .param("depth", scope.depth() as i64)
+            .param("description", scope.description())
+            .run()
             .await?;
         }
 
         // Create hierarchy: Domain -> Feature -> Namespace -> Component -> Unit
-        txn.run(query(
+        txn.query(
             "MATCH (domain:Scope {name: 'Domain'})
              MATCH (feature:Scope {name: 'Feature'})
              MATCH (namespace:Scope {name: 'Namespace'})
@@ -60,14 +45,18 @@ impl M003SeedData {
              MERGE (feature)-[:COMPOSES]->(namespace)
              MERGE (namespace)-[:COMPOSES]->(component)
              MERGE (component)-[:COMPOSES]->(unit)",
-        ))
+        )
+        .run()
         .await?;
 
         Ok(())
     }
 
     /// Create default categories for each scope.
-    async fn create_default_categories(&self, txn: &mut Txn) -> Result<(), AppError> {
+    async fn create_default_categories<T: CypherExecutor + Sync>(
+        &self,
+        txn: &T,
+    ) -> Result<(), AppError> {
         let categories = [
             // Domain
             ("core", "Domain", "Core business logic"),
@@ -93,22 +82,33 @@ impl M003SeedData {
             ("constant", "Unit", "Constant value"),
         ];
 
+        // Get current timestamp as ISO 8601 string for AGE compatibility
+        let now = chrono::Utc::now().to_rfc3339();
+
         for (name, scope, description) in categories {
-            txn.run(
-                query(
-                    "MATCH (s:Scope {name: $scope})
-                     MERGE (c:Category {name: $name})-[:IN_SCOPE]->(s)
-                     SET c.id = coalesce(c.id, $id),
-                         c.description = $description,
-                         c.created_at = coalesce(c.created_at, datetime())",
-                )
-                .param("name", name)
-                .param("scope", scope)
-                .param("description", description)
-                .param("id", generate_ulid()),
+            txn.query(
+                "MATCH (s:Scope {name: $scope})
+                 MERGE (c:Category {name: $name})-[:IN_SCOPE]->(s)
+                 SET c.id = coalesce(c.id, $id),
+                     c.description = $description,
+                     c.created_at = coalesce(c.created_at, $created_at)",
             )
+            .param("name", name)
+            .param("scope", scope)
+            .param("description", description)
+            .param("id", generate_ulid())
+            .param("created_at", &now)
+            .run()
             .await?;
         }
+        Ok(())
+    }
+
+    /// Attach triggers to the now-existing label tables.
+    async fn attach_triggers<T: SqlExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
+        // Call the helper function created in M002 to attach triggers
+        // The label tables should now exist after creating seed data
+        txn.execute_sql("SELECT attach_graph_triggers()").await?;
         Ok(())
     }
 }

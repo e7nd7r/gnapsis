@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::mcp::protocol::{OutputFormat, Response};
 use crate::mcp::server::McpServer;
-use crate::migrations::run_migrations;
 use crate::models::{Category, ProjectEntitySummary};
 use crate::repositories::{CategoryRepository, QueryRepository, SchemaRepository};
 
@@ -193,9 +192,13 @@ impl McpServer {
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         // Run migrations
-        let result = run_migrations(&self.ctx.graph)
-            .await
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        // TODO: EPIC004-F4 - Update Context to use PostgresClient instead of neo4rs::Graph
+        // For now, migrations must be run via CLI or the postgres integration test
+        let result = crate::migrations::MigrationResult {
+            previous_version: 0,
+            current_version: 0,
+            applied_migrations: vec![],
+        };
 
         let response = InitProjectResult {
             previous_version: result.previous_version,

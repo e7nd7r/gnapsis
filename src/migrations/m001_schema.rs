@@ -1,71 +1,82 @@
-//! Schema migration - constraints and vector indexes.
-
-use async_trait::async_trait;
-use neo4rs::{query, Txn};
+//! Schema migration - AGE graph creation and indexes.
 
 use crate::error::AppError;
+use crate::graph::{CypherExecutor, SqlExecutor};
 
-use super::Migration;
-
-/// Schema setup migration (DDL only - constraints and indexes).
+/// Schema setup migration (DDL only - graph creation and indexes).
 pub struct M001Schema;
 
-#[async_trait]
-impl Migration for M001Schema {
-    fn id(&self) -> &'static str {
-        "m001_schema"
-    }
-
-    fn version(&self) -> u32 {
-        1
-    }
-
-    fn description(&self) -> &'static str {
-        "Schema setup (constraints, vector indexes)"
-    }
-
-    async fn up(&self, txn: &mut Txn) -> Result<(), AppError> {
-        self.create_constraints(txn).await?;
-        self.create_vector_indexes(txn).await?;
-        Ok(())
-    }
-}
-
 impl M001Schema {
-    /// Create uniqueness constraints for all node types.
-    async fn create_constraints(&self, txn: &mut Txn) -> Result<(), AppError> {
-        let constraints = [
-            "CREATE CONSTRAINT index_entity_id IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
-            "CREATE CONSTRAINT index_category_id IF NOT EXISTS FOR (c:Category) REQUIRE c.id IS UNIQUE",
-            "CREATE CONSTRAINT index_document_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE",
-            "CREATE CONSTRAINT index_documentreference_id IF NOT EXISTS FOR (r:DocumentReference) REQUIRE r.id IS UNIQUE",
-            "CREATE CONSTRAINT index_scope_name IF NOT EXISTS FOR (s:Scope) REQUIRE s.name IS UNIQUE",
-        ];
-
-        for constraint in constraints {
-            txn.run(query(constraint)).await?;
-        }
+    /// Apply the migration.
+    pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
+    where
+        T: CypherExecutor + SqlExecutor + Sync,
+    {
+        self.create_graph(txn).await?;
+        self.create_indexes(txn).await?;
         Ok(())
     }
 
-    /// Create vector indexes for semantic search.
+    /// Create the AGE graph.
     ///
-    /// These may fail on older Neo4j versions - log warning but don't fail.
-    async fn create_vector_indexes(&self, txn: &mut Txn) -> Result<(), AppError> {
-        let indexes = [
-            "CREATE VECTOR INDEX index_entity_embedding IF NOT EXISTS
-             FOR (e:Entity) ON e.embedding
-             OPTIONS {indexConfig: {`vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}}",
-            "CREATE VECTOR INDEX index_documentreference_embedding IF NOT EXISTS
-             FOR (r:DocumentReference) ON r.embedding
-             OPTIONS {indexConfig: {`vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}}",
-        ];
+    /// Uses `create_graph` if it doesn't exist.
+    /// AGE requires the graph to exist before running Cypher queries.
+    async fn create_graph<T: SqlExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
+        // Check if graph exists first, create if not
+        // AGE doesn't have IF NOT EXISTS for create_graph, so we check manually
+        txn.execute_sql(
+            r#"
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM ag_catalog.ag_graph WHERE name = 'knowledge_graph'
+                ) THEN
+                    PERFORM ag_catalog.create_graph('knowledge_graph');
+                END IF;
+            END $$;
+            "#,
+        )
+        .await?;
 
-        for index in indexes {
-            if let Err(e) = txn.run(query(index)).await {
-                tracing::warn!("Could not create vector index: {}", e);
-            }
-        }
+        Ok(())
+    }
+
+    /// Create indexes for efficient lookups.
+    ///
+    /// In AGE, nodes are stored in PostgreSQL tables under the graph's schema.
+    /// We create GIN indexes on the properties JSONB column for efficient lookups.
+    ///
+    /// Note: AGE label tables are created lazily when nodes of that type are first created.
+    /// These indexes will be applied after the seed data migration creates the labels.
+    async fn create_indexes<T: SqlExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
+        // AGE stores node properties in an 'properties' column of type agtype
+        // We'll create indexes after labels exist (in a later migration or via triggers)
+        //
+        // For now, we create the pgvector extension for embedding support
+        txn.execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
+            .await?;
+
+        // Create embeddings table for vector search
+        // Separate from graph for efficient vector operations with pgvector
+        txn.execute_sql(
+            r#"
+            CREATE TABLE IF NOT EXISTS embeddings (
+                id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                embedding vector(384),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS embeddings_entity_type_idx
+            ON embeddings (entity_type);
+
+            CREATE INDEX IF NOT EXISTS embeddings_vector_idx
+            ON embeddings USING ivfflat (embedding vector_cosine_ops)
+            WITH (lists = 100);
+            "#,
+        )
+        .await?;
+
         Ok(())
     }
 }

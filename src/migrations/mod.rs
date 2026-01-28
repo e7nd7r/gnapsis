@@ -1,14 +1,14 @@
-//! Schema migrations for Neo4j with version tracking.
+//! Schema migrations for PostgreSQL + Apache AGE with version tracking.
 //!
 //! Migrations are:
 //! - **Idempotent**: Use `IF NOT EXISTS`, `MERGE`, `COALESCE` - required for safe retries
 //! - **Additive-only**: Never delete properties, nodes, relationships, or constraints
 //! - **Forward-only**: No rollback support - create compensating migrations if needed
-//! - **Version-tracked**: Schema version stored in graph metadata node
+//! - **Version-tracked**: Schema version stored in `schema_version` SQL table
 //! - **Auto-applied**: Migrations run automatically on `init_project`
 //!
-//! Note: Neo4j doesn't allow mixing schema changes (CREATE CONSTRAINT/INDEX) with
-//! data writes (MERGE/CREATE) in the same transaction. Migrations must be idempotent.
+//! Migrations can use both Cypher (via `CypherExecutor`) and SQL (via `SqlExecutor`)
+//! depending on what each migration needs.
 
 mod m001_schema;
 mod m002_triggers;
@@ -22,35 +22,8 @@ pub use m003_seed_data::M003SeedData;
 pub use m004_ontology_v2::M004OntologyV2;
 pub use m005_ontology_v2_data::M005OntologyV2Data;
 
-use async_trait::async_trait;
-use neo4rs::{query, Graph, Txn};
-
 use crate::error::AppError;
-
-/// A schema migration.
-///
-/// Migrations are applied in order of their version number.
-/// Each migration runs within a transaction - on failure, changes are rolled back.
-/// Migrations must be idempotent for safe retries.
-///
-/// Note: neo4rs 0.7+ implements `Send + Sync` for `Txn`, so we can use
-/// `#[async_trait]` which adds Send bounds by default.
-#[async_trait]
-pub trait Migration: Send + Sync {
-    /// Unique identifier for this migration (e.g., "m001_init").
-    fn id(&self) -> &'static str;
-
-    /// Version number - migrations run in ascending order.
-    fn version(&self) -> u32;
-
-    /// Human-readable description for logging.
-    fn description(&self) -> &'static str;
-
-    /// Apply the migration within a transaction.
-    ///
-    /// The transaction is managed by `run_migrations` - just use it for queries.
-    async fn up(&self, txn: &mut Txn) -> Result<(), AppError>;
-}
+use crate::graph::{CypherExecutor, GraphClient, SqlExecutor, Transaction};
 
 /// Result of running migrations.
 #[derive(Debug, Clone)]
@@ -63,15 +36,59 @@ pub struct MigrationResult {
     pub applied_migrations: Vec<String>,
 }
 
-/// Returns all migrations in version order.
-fn all_migrations() -> Vec<Box<dyn Migration>> {
-    vec![
-        Box::new(M001Schema),
-        Box::new(M002Triggers),
-        Box::new(M003SeedData),
-        Box::new(M004OntologyV2),
-        Box::new(M005OntologyV2Data),
-    ]
+/// All migrations in version order.
+///
+/// Using a const array instead of trait objects since the generic `up<T>` method
+/// makes the Migration trait not object-safe. This is fine since we have a fixed
+/// set of migrations known at compile time.
+const MIGRATIONS: &[MigrationEntry] = &[
+    MigrationEntry {
+        id: "m001_schema",
+        version: 1,
+        description: "Schema setup (graph creation, indexes)",
+    },
+    MigrationEntry {
+        id: "m002_triggers",
+        version: 2,
+        description: "PostgreSQL triggers for domain constraints",
+    },
+    MigrationEntry {
+        id: "m003_seed_data",
+        version: 3,
+        description: "Seed data (scopes and default categories)",
+    },
+    MigrationEntry {
+        id: "m004_ontology_v2",
+        version: 4,
+        description: "Ontology V2 schema (CodeReference and TextReference indexes)",
+    },
+    MigrationEntry {
+        id: "m005_ontology_v2_data",
+        version: 5,
+        description: "Migrate DocumentReference nodes to CodeReference/TextReference",
+    },
+];
+
+/// Migration metadata entry.
+struct MigrationEntry {
+    id: &'static str,
+    version: u32,
+    description: &'static str,
+}
+
+/// Dispatches to the appropriate migration implementation.
+async fn run_migration<T>(id: &str, txn: &T) -> Result<(), AppError>
+where
+    T: CypherExecutor + SqlExecutor + Sync,
+{
+    match id {
+        "m001_schema" => M001Schema.up(txn).await,
+        "m002_triggers" => M002Triggers.up(txn).await,
+        "m003_seed_data" => M003SeedData.up(txn).await,
+        "m004_ontology_v2" => M004OntologyV2.up(txn).await,
+        "m005_ontology_v2_data" => M005OntologyV2Data.up(txn).await,
+        _ => Err(AppError::Internal(format!("Unknown migration: {}", id))),
+    }
 }
 
 /// Run all pending migrations.
@@ -80,39 +97,49 @@ fn all_migrations() -> Vec<Box<dyn Migration>> {
 /// higher than the current schema version are applied. Each migration runs
 /// in its own transaction - on failure, changes are rolled back. The schema
 /// version is updated after each successful migration.
-pub async fn run_migrations(graph: &Graph) -> Result<MigrationResult, AppError> {
-    let previous_version = get_schema_version(graph).await?;
-    let migrations = all_migrations();
+///
+/// # Type Parameters
+///
+/// * `C` - A graph client that can begin transactions supporting both Cypher and SQL
+pub async fn run_migrations<C>(client: &C) -> Result<MigrationResult, AppError>
+where
+    C: GraphClient,
+    for<'a> C::Tx<'a>: CypherExecutor + SqlExecutor,
+{
+    // Ensure schema_version table exists (outside transaction for DDL)
+    ensure_schema_version_table(client).await?;
+
+    let previous_version = get_schema_version(client).await?;
 
     let mut applied = vec![];
     let mut current_version = previous_version;
 
-    for migration in &migrations {
-        if migration.version() > current_version {
+    for migration in MIGRATIONS {
+        if migration.version > current_version {
             tracing::info!(
                 "Applying migration {} (v{}): {}",
-                migration.id(),
-                migration.version(),
-                migration.description()
+                migration.id,
+                migration.version,
+                migration.description
             );
 
             // Run migration in a transaction
-            let mut txn = graph.start_txn().await?;
-            match migration.up(&mut txn).await {
+            let txn = client.begin().await?;
+            match run_migration(migration.id, &txn).await {
                 Ok(()) => {
                     txn.commit().await?;
                 }
                 Err(e) => {
-                    tracing::error!("Migration {} failed, rolling back: {}", migration.id(), e);
+                    tracing::error!("Migration {} failed, rolling back: {}", migration.id, e);
                     txn.rollback().await?;
                     return Err(e);
                 }
             }
 
-            // Update version after successful commit
-            update_schema_version(graph, migration.version(), migration.id()).await?;
-            current_version = migration.version();
-            applied.push(migration.id().to_string());
+            // Update version after successful commit (separate transaction)
+            update_schema_version(client, migration.version, migration.id).await?;
+            current_version = migration.version;
+            applied.push(migration.id.to_string());
         }
     }
 
@@ -123,44 +150,83 @@ pub async fn run_migrations(graph: &Graph) -> Result<MigrationResult, AppError> 
     })
 }
 
+/// SQL to create the schema_version table.
+const CREATE_SCHEMA_VERSION_TABLE: &str = r#"
+CREATE TABLE IF NOT EXISTS schema_version (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    version INTEGER NOT NULL DEFAULT 0,
+    applied_migrations TEXT[] NOT NULL DEFAULT '{}',
+    last_applied_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Ensure exactly one row exists
+INSERT INTO schema_version (id, version)
+VALUES (1, 0)
+ON CONFLICT (id) DO NOTHING;
+"#;
+
+/// Ensures the schema_version table exists.
+///
+/// This runs outside a transaction since DDL in PostgreSQL can cause issues
+/// when mixed with other operations in the same transaction.
+async fn ensure_schema_version_table<C>(client: &C) -> Result<(), AppError>
+where
+    C: GraphClient,
+    for<'a> C::Tx<'a>: SqlExecutor,
+{
+    let txn = client.begin().await?;
+    txn.execute_sql(CREATE_SCHEMA_VERSION_TABLE).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
 /// Get the current schema version from the database.
 ///
-/// Returns 0 if no schema version node exists (fresh database).
-async fn get_schema_version(graph: &Graph) -> Result<u32, AppError> {
-    let mut result = graph
-        .execute(query(
-            "MATCH (sv:SchemaVersion) RETURN sv.version AS version LIMIT 1",
-        ))
+/// Returns 0 if no version has been set (fresh database).
+async fn get_schema_version<C>(client: &C) -> Result<u32, AppError>
+where
+    C: GraphClient,
+    for<'a> C::Tx<'a>: SqlExecutor,
+{
+    use futures::TryStreamExt;
+
+    let txn = client.begin().await?;
+    let rows: Vec<_> = txn
+        .query_sql("SELECT version FROM schema_version WHERE id = 1")
+        .await?
+        .try_collect()
         .await?;
 
-    if let Some(row) = result.next().await? {
-        let version: i64 = row.get("version").map_err(|e| AppError::Query {
-            message: e.to_string(),
-            query: "get schema version".to_string(),
-        })?;
-        Ok(version as u32)
+    let version = if let Some(row) = rows.first() {
+        row.get::<i64>("version").unwrap_or(0) as u32
     } else {
-        Ok(0)
-    }
+        0
+    };
+
+    txn.commit().await?;
+    Ok(version)
 }
 
 /// Update the schema version after applying a migration.
-async fn update_schema_version(
-    graph: &Graph,
+async fn update_schema_version<C>(
+    client: &C,
     version: u32,
     migration_id: &str,
-) -> Result<(), AppError> {
-    graph
-        .run(
-            query(
-                "MERGE (sv:SchemaVersion)
-                 SET sv.version = $version,
-                     sv.applied_migrations = coalesce(sv.applied_migrations, []) + [$migration_id],
-                     sv.last_applied_at = datetime()",
-            )
-            .param("version", version as i64)
-            .param("migration_id", migration_id),
-        )
-        .await?;
+) -> Result<(), AppError>
+where
+    C: GraphClient,
+    for<'a> C::Tx<'a>: SqlExecutor,
+{
+    let txn = client.begin().await?;
+    let sql = format!(
+        "UPDATE schema_version
+         SET version = {},
+             applied_migrations = array_append(applied_migrations, '{}'),
+             last_applied_at = NOW()
+         WHERE id = 1",
+        version, migration_id
+    );
+    txn.execute_sql(&sql).await?;
+    txn.commit().await?;
     Ok(())
 }

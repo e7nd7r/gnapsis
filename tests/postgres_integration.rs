@@ -10,6 +10,7 @@ use gnapsis::graph::backends::postgres::PostgresClient;
 use gnapsis::graph::{
     CypherExecutor, Graph, GraphClient, Params, QueryExt, SqlExecutor, Transaction,
 };
+use gnapsis::migrations::run_migrations;
 use serial_test::serial;
 
 const TEST_CONNECTION: &str = "postgresql://postgres:postgres@localhost:5432/gnapsis_dev";
@@ -433,5 +434,158 @@ mod injection_tests {
         }
 
         cleanup(&client).await;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Migration Tests
+// -----------------------------------------------------------------------------
+
+#[serial]
+mod migration_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_run_migrations() {
+        let client = create_client().await;
+
+        // Run migrations
+        let result = run_migrations(&client)
+            .await
+            .expect("Migrations should succeed");
+
+        println!("Migration result: {:?}", result);
+
+        // On a fresh db (after db-reset), we should apply all 5 migrations
+        // On subsequent runs, we may apply 0 if already at latest version
+        assert!(
+            result.current_version >= 5,
+            "Should be at version 5 or higher"
+        );
+
+        // Verify schema_version table exists and has correct version
+        let txn = client.begin().await.expect("Failed to begin transaction");
+        let rows: Vec<_> = txn
+            .query_sql("SELECT version, applied_migrations FROM schema_version WHERE id = 1")
+            .await
+            .expect("Should query schema_version")
+            .try_collect()
+            .await
+            .expect("Should collect rows");
+        txn.commit().await.expect("Failed to commit");
+
+        assert_eq!(rows.len(), 1, "Should have one schema_version row");
+        let version: i64 = rows[0].get("version").expect("Should have version");
+        assert!(version >= 5, "Version should be >= 5");
+
+        // Verify the AGE graph exists
+        let txn = client.begin().await.expect("Failed to begin transaction");
+        let rows: Vec<_> = txn
+            .query_sql("SELECT name FROM ag_catalog.ag_graph WHERE name = 'knowledge_graph'")
+            .await
+            .expect("Should query ag_graph")
+            .try_collect()
+            .await
+            .expect("Should collect rows");
+        txn.commit().await.expect("Failed to commit");
+
+        assert_eq!(rows.len(), 1, "knowledge_graph should exist");
+
+        // Verify seed data: Scopes exist
+        let rows = client
+            .query("MATCH (s:Scope) RETURN s.name as name ORDER BY s.depth")
+            .fetch_all()
+            .await
+            .expect("Should query scopes");
+
+        let scope_names: Vec<String> = rows
+            .iter()
+            .map(|r| r.get::<String>("name").unwrap_or_default())
+            .collect();
+
+        assert!(
+            scope_names.contains(&"Domain".to_string()),
+            "Should have Domain scope"
+        );
+        assert!(
+            scope_names.contains(&"Feature".to_string()),
+            "Should have Feature scope"
+        );
+        assert!(
+            scope_names.contains(&"Unit".to_string()),
+            "Should have Unit scope"
+        );
+
+        // Verify seed data: Categories exist
+        let rows = client
+            .query("MATCH (c:Category) RETURN count(c) as cnt")
+            .fetch_all()
+            .await
+            .expect("Should query categories");
+
+        let count: i64 = rows[0].get("cnt").unwrap_or(0);
+        assert!(count >= 17, "Should have at least 17 default categories");
+
+        // Verify trigger functions exist
+        let txn = client.begin().await.expect("Failed to begin transaction");
+        let rows: Vec<_> = txn
+            .query_sql(
+                "SELECT proname FROM pg_proc WHERE proname IN (
+                    'prevent_delete_with_children',
+                    'cascade_delete_entity_references',
+                    'validate_belongs_to_scope',
+                    'attach_graph_triggers'
+                )",
+            )
+            .await
+            .expect("Should query functions")
+            .try_collect()
+            .await
+            .expect("Should collect rows");
+        txn.commit().await.expect("Failed to commit");
+
+        assert!(
+            rows.len() >= 4,
+            "Should have at least 4 trigger functions, found {}",
+            rows.len()
+        );
+
+        // Verify embeddings table exists
+        let txn = client.begin().await.expect("Failed to begin transaction");
+        let result = txn
+            .execute_sql("SELECT 1 FROM embeddings LIMIT 1")
+            .await;
+        txn.rollback().await.expect("Failed to rollback");
+
+        assert!(result.is_ok(), "embeddings table should exist");
+
+        println!("All migration tests passed!");
+    }
+
+    #[tokio::test]
+    async fn test_migrations_are_idempotent() {
+        let client = create_client().await;
+
+        // Run migrations twice
+        let result1 = run_migrations(&client)
+            .await
+            .expect("First migration run should succeed");
+
+        let result2 = run_migrations(&client)
+            .await
+            .expect("Second migration run should succeed");
+
+        // Second run should apply 0 migrations (already up to date)
+        assert_eq!(
+            result2.applied_migrations.len(),
+            0,
+            "Second run should not apply any migrations"
+        );
+
+        // Versions should match
+        assert_eq!(
+            result1.current_version, result2.current_version,
+            "Versions should match"
+        );
     }
 }
