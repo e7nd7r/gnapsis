@@ -552,9 +552,7 @@ mod migration_tests {
 
         // Verify embeddings table exists
         let txn = client.begin().await.expect("Failed to begin transaction");
-        let result = txn
-            .execute_sql("SELECT 1 FROM embeddings LIMIT 1")
-            .await;
+        let result = txn.execute_sql("SELECT 1 FROM embeddings LIMIT 1").await;
         txn.rollback().await.expect("Failed to rollback");
 
         assert!(result.is_ok(), "embeddings table should exist");

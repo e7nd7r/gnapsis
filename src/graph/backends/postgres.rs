@@ -226,27 +226,24 @@ impl CypherExecutor for PostgresTransaction {
 #[async_trait]
 impl SqlExecutor for PostgresTransaction {
     async fn execute_sql(&self, sql: &str) -> Result<(), AppError> {
-        self.conn
-            .batch_execute(sql)
-            .await
-            .map_err(|e| {
-                // Extract detailed error from PostgreSQL
-                let detail = e
-                    .as_db_error()
-                    .map(|db_err| {
-                        format!(
-                            "{}: {} [{}] position={:?} (detail: {:?}, hint: {:?})",
-                            db_err.severity(),
-                            db_err.message(),
-                            db_err.code().code(),
-                            db_err.position(),
-                            db_err.detail(),
-                            db_err.hint()
-                        )
-                    })
-                    .unwrap_or_else(|| e.to_string());
-                AppError::Internal(format!("SQL execution failed: {}", detail))
-            })?;
+        self.conn.batch_execute(sql).await.map_err(|e| {
+            // Extract detailed error from PostgreSQL
+            let detail = e
+                .as_db_error()
+                .map(|db_err| {
+                    format!(
+                        "{}: {} [{}] position={:?} (detail: {:?}, hint: {:?})",
+                        db_err.severity(),
+                        db_err.message(),
+                        db_err.code().code(),
+                        db_err.position(),
+                        db_err.detail(),
+                        db_err.hint()
+                    )
+                })
+                .unwrap_or_else(|| e.to_string());
+            AppError::Internal(format!("SQL execution failed: {}", detail))
+        })?;
         Ok(())
     }
 

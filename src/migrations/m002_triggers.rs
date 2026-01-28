@@ -28,7 +28,8 @@ impl M002Triggers {
     ) -> Result<(), AppError> {
         // Ensure AGE is loaded for trigger functions
         txn.execute_sql("LOAD 'age'").await?;
-        txn.execute_sql("SET search_path = ag_catalog, public").await?;
+        txn.execute_sql("SET search_path = ag_catalog, public")
+            .await?;
 
         // Function to prevent deletion of entities with children
         // Note: Use $func$ for function body to allow $$ inside for Cypher queries
