@@ -46,22 +46,56 @@ impl From<figment::Error> for ConfigError {
 /// Root configuration structure.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub neo4j: Neo4jConfig,
+    #[serde(default)]
+    pub postgres: PostgresConfig,
     pub embedding: EmbeddingConfig,
     #[serde(default)]
     pub project: ProjectConfig,
 }
 
-/// Neo4j database configuration.
-#[derive(Debug, Clone, Deserialize)]
+/// Neo4j database configuration (legacy, being replaced by PostgresConfig).
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Neo4jConfig {
+    #[serde(default)]
     pub uri: String,
+    #[serde(default)]
     pub user: String,
     pub password: Option<String>,
     #[serde(default = "default_database")]
     pub database: String,
     #[serde(default = "default_pool_size")]
     pub pool_size: usize,
+}
+
+/// PostgreSQL + Apache AGE database configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PostgresConfig {
+    #[serde(default = "default_postgres_uri")]
+    pub uri: String,
+    #[serde(default = "default_graph_name")]
+    pub graph_name: String,
+    #[serde(default = "default_pool_size")]
+    pub pool_size: usize,
+}
+
+impl Default for PostgresConfig {
+    fn default() -> Self {
+        Self {
+            uri: default_postgres_uri(),
+            graph_name: default_graph_name(),
+            pool_size: default_pool_size(),
+        }
+    }
+}
+
+fn default_postgres_uri() -> String {
+    "postgresql://postgres:postgres@localhost:5432/gnapsis_dev".to_string()
+}
+
+fn default_graph_name() -> String {
+    "knowledge_graph".to_string()
 }
 
 fn default_database() -> String {

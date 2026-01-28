@@ -1,122 +1,202 @@
-//! APOC triggers migration for domain constraint enforcement.
-
-use async_trait::async_trait;
-use neo4rs::{query, Txn};
+//! PostgreSQL triggers migration for domain constraint enforcement.
+//!
+//! AGE allows executing Cypher queries from SQL via the `cypher()` function.
+//! We use this to implement validation triggers that use Cypher for graph traversal.
+//!
+//! Note: Label tables are created lazily by AGE, so we create the trigger
+//! functions here and attach them to tables after seed data creates the labels.
 
 use crate::error::AppError;
+use crate::graph::{CypherExecutor, SqlExecutor};
 
-use super::Migration;
-
-/// APOC triggers migration.
+/// PostgreSQL triggers migration.
 pub struct M002Triggers;
 
-#[async_trait]
-impl Migration for M002Triggers {
-    fn id(&self) -> &'static str {
-        "m002_triggers"
-    }
-
-    fn version(&self) -> u32 {
-        2
-    }
-
-    fn description(&self) -> &'static str {
-        "APOC triggers for domain constraints"
-    }
-
-    async fn up(&self, txn: &mut Txn) -> Result<(), AppError> {
-        self.create_apoc_triggers(txn).await
-    }
-}
-
 impl M002Triggers {
-    /// Create APOC triggers for domain constraint enforcement.
-    ///
-    /// Requires `apoc.trigger.enabled=true` in neo4j.conf.
-    /// These may fail if APOC is not installed - log warning but don't fail.
-    async fn create_apoc_triggers(&self, txn: &mut Txn) -> Result<(), AppError> {
-        // Trigger 1: Validate BELONGS_TO scope constraint
-        // Child scope depth must be greater than parent scope depth
-        let validate_belongs_to = r#"
-            CALL apoc.trigger.add('validate_belongs_to',
-              "UNWIND $createdRelationships AS r
-               WITH r
-               WHERE type(r) = 'BELONGS_TO'
-               MATCH (child)-[r]->(parent)
-               MATCH (child)-[:CLASSIFIED_AS]->(:Category)-[:IN_SCOPE]->(cs:Scope)
-               MATCH (parent)-[:CLASSIFIED_AS]->(:Category)-[:IN_SCOPE]->(ps:Scope)
-               CALL apoc.util.validate(
-                 cs.depth <= ps.depth,
-                 'Invalid BELONGS_TO: %s (depth %d) cannot belong to %s (depth %d)',
-                 [child.name, cs.depth, parent.name, ps.depth]
-               )
-               RETURN null",
-              {phase: 'before'})
-        "#;
+    /// Apply the migration.
+    pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
+    where
+        T: CypherExecutor + SqlExecutor + Sync,
+    {
+        self.create_trigger_functions(txn).await
+    }
 
-        // Trigger 2: Validate single category per scope
-        // Entity can have at most ONE category per scope
-        let validate_single_category = r#"
-            CALL apoc.trigger.add('validate_single_category_per_scope',
-              "UNWIND $createdRelationships AS r
-               WITH r
-               WHERE type(r) = 'CLASSIFIED_AS'
-               MATCH (e:Entity)-[r]->(newCat:Category)-[:IN_SCOPE]->(s:Scope)
-               MATCH (e)-[:CLASSIFIED_AS]->(existingCat:Category)-[:IN_SCOPE]->(s)
-               WHERE existingCat <> newCat
-               CALL apoc.util.validate(
-                 true,
-                 'Entity %s already has category %s at scope %s, cannot add %s',
-                 [e.name, existingCat.name, s.name, newCat.name]
-               )
-               RETURN null",
-              {phase: 'before'})
-        "#;
+    /// Create PostgreSQL trigger functions using Cypher for validation.
+    async fn create_trigger_functions<T: SqlExecutor + Sync>(
+        &self,
+        txn: &T,
+    ) -> Result<(), AppError> {
+        // Ensure AGE is loaded for trigger functions
+        txn.execute_sql("LOAD 'age'").await?;
+        txn.execute_sql("SET search_path = ag_catalog, public")
+            .await?;
 
-        // Trigger 3: Prevent delete with children
-        // Cannot delete entity that has children
-        let prevent_delete_with_children = r#"
-            CALL apoc.trigger.add('prevent_delete_with_children',
-              "UNWIND $deletedNodes AS n
-               WITH n
-               WHERE n:Entity
-               MATCH (child:Entity)-[:BELONGS_TO]->(n)
-               CALL apoc.util.validate(
-                 true,
-                 'Cannot delete entity %s: has children',
-                 [n.name]
-               )
-               RETURN null",
-              {phase: 'before'})
-        "#;
+        // Function to prevent deletion of entities with children
+        // Note: Use $func$ for function body to allow $$ inside for Cypher queries
+        txn.execute_sql(
+            r#"
+            CREATE OR REPLACE FUNCTION prevent_delete_with_children()
+            RETURNS TRIGGER AS $func$
+            DECLARE
+                entity_id TEXT;
+                child_count INTEGER;
+            BEGIN
+                -- Load AGE for this session
+                LOAD 'age';
+                SET search_path = ag_catalog, public;
 
-        // Trigger 4: Cascade delete entity
-        // Cleanup DocumentReferences when entity is deleted
-        let cascade_delete_entity = r#"
-            CALL apoc.trigger.add('cascade_delete_entity',
-              "UNWIND $deletedNodes AS n
-               WITH n
-               WHERE n:Entity
-               OPTIONAL MATCH (n)-[:HAS_REFERENCE]->(ref:DocumentReference)
-               DETACH DELETE ref",
-              {phase: 'after'})
-        "#;
+                -- Extract entity id from AGE properties
+                entity_id := agtype_access_operator(OLD.properties, '"id"')::text;
+                -- Remove quotes from the extracted value
+                entity_id := trim(both '"' from entity_id);
 
-        let triggers = [
-            ("validate_belongs_to", validate_belongs_to),
-            (
-                "validate_single_category_per_scope",
-                validate_single_category,
-            ),
-            ("prevent_delete_with_children", prevent_delete_with_children),
-            ("cascade_delete_entity", cascade_delete_entity),
-        ];
+                -- Use Cypher to count children
+                SELECT count INTO child_count FROM cypher('knowledge_graph', $$
+                    MATCH (child:Entity)-[:BELONGS_TO]->(parent:Entity)
+                    WHERE parent.id = $entity_id
+                    RETURN count(child) as count
+                $$, format('{"entity_id": "%s"}', entity_id)::agtype) as (count agtype);
 
-        for (name, trigger_query) in triggers {
-            if let Err(e) = txn.run(query(trigger_query)).await {
-                tracing::warn!("Could not create APOC trigger '{}': {}", name, e);
-            }
-        }
+                IF child_count > 0 THEN
+                    RAISE EXCEPTION 'Cannot delete entity %: has % child(ren)', entity_id, child_count;
+                END IF;
+
+                RETURN OLD;
+            END;
+            $func$ LANGUAGE plpgsql;
+            "#,
+        )
+        .await?;
+
+        // Function to cascade delete references when entity is deleted
+        txn.execute_sql(
+            r#"
+            CREATE OR REPLACE FUNCTION cascade_delete_entity_references()
+            RETURNS TRIGGER AS $func$
+            DECLARE
+                entity_id TEXT;
+            BEGIN
+                LOAD 'age';
+                SET search_path = ag_catalog, public;
+
+                entity_id := agtype_access_operator(OLD.properties, '"id"')::text;
+                entity_id := trim(both '"' from entity_id);
+
+                -- Delete references via Cypher
+                PERFORM * FROM cypher('knowledge_graph', $$
+                    MATCH (e:Entity {id: $entity_id})-[:HAS_REFERENCE]->(r)
+                    DETACH DELETE r
+                $$, format('{"entity_id": "%s"}', entity_id)::agtype) as (result agtype);
+
+                -- Clean up embeddings table
+                DELETE FROM embeddings WHERE id = entity_id;
+
+                RETURN OLD;
+            END;
+            $func$ LANGUAGE plpgsql;
+            "#,
+        )
+        .await?;
+
+        // Function to validate scope hierarchy on BELONGS_TO creation
+        txn.execute_sql(
+            r#"
+            CREATE OR REPLACE FUNCTION validate_belongs_to_scope()
+            RETURNS TRIGGER AS $func$
+            DECLARE
+                child_depth INTEGER;
+                parent_depth INTEGER;
+                child_name TEXT;
+                parent_name TEXT;
+                rec RECORD;
+            BEGIN
+                LOAD 'age';
+                SET search_path = ag_catalog, public;
+
+                -- Get child entity info using graph vertex id
+                FOR rec IN
+                    SELECT * FROM cypher('knowledge_graph', $$
+                        MATCH (e:Entity)-[:CLASSIFIED_AS]->(:Category)-[:IN_SCOPE]->(s:Scope)
+                        WHERE id(e) = $vertex_id
+                        RETURN e.name as name, s.depth as depth
+                    $$, format('{"vertex_id": %s}', NEW.start_id)::agtype) as (name agtype, depth agtype)
+                LOOP
+                    child_name := trim(both '"' from rec.name::text);
+                    child_depth := rec.depth::text::integer;
+                END LOOP;
+
+                -- Get parent entity info
+                FOR rec IN
+                    SELECT * FROM cypher('knowledge_graph', $$
+                        MATCH (e:Entity)-[:CLASSIFIED_AS]->(:Category)-[:IN_SCOPE]->(s:Scope)
+                        WHERE id(e) = $vertex_id
+                        RETURN e.name as name, s.depth as depth
+                    $$, format('{"vertex_id": %s}', NEW.end_id)::agtype) as (name agtype, depth agtype)
+                LOOP
+                    parent_name := trim(both '"' from rec.name::text);
+                    parent_depth := rec.depth::text::integer;
+                END LOOP;
+
+                -- Validate scope hierarchy
+                IF child_depth IS NOT NULL AND parent_depth IS NOT NULL THEN
+                    IF child_depth <= parent_depth THEN
+                        RAISE EXCEPTION 'Invalid BELONGS_TO: % (depth %) cannot belong to % (depth %)',
+                            child_name, child_depth, parent_name, parent_depth;
+                    END IF;
+                END IF;
+
+                RETURN NEW;
+            END;
+            $func$ LANGUAGE plpgsql;
+            "#,
+        )
+        .await?;
+
+        // Helper function to attach triggers after label tables exist
+        txn.execute_sql(
+            r#"
+            CREATE OR REPLACE FUNCTION attach_graph_triggers()
+            RETURNS void AS $$
+            BEGIN
+                -- Entity triggers
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'knowledge_graph' AND table_name = 'Entity'
+                ) THEN
+                    DROP TRIGGER IF EXISTS trg_prevent_delete_with_children ON knowledge_graph."Entity";
+                    DROP TRIGGER IF EXISTS trg_cascade_delete_references ON knowledge_graph."Entity";
+
+                    CREATE TRIGGER trg_prevent_delete_with_children
+                        BEFORE DELETE ON knowledge_graph."Entity"
+                        FOR EACH ROW EXECUTE FUNCTION prevent_delete_with_children();
+
+                    CREATE TRIGGER trg_cascade_delete_references
+                        AFTER DELETE ON knowledge_graph."Entity"
+                        FOR EACH ROW EXECUTE FUNCTION cascade_delete_entity_references();
+
+                    RAISE NOTICE 'Attached triggers to Entity table';
+                END IF;
+
+                -- BELONGS_TO edge triggers
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'knowledge_graph' AND table_name = 'BELONGS_TO'
+                ) THEN
+                    DROP TRIGGER IF EXISTS trg_validate_belongs_to ON knowledge_graph."BELONGS_TO";
+
+                    CREATE TRIGGER trg_validate_belongs_to
+                        BEFORE INSERT ON knowledge_graph."BELONGS_TO"
+                        FOR EACH ROW EXECUTE FUNCTION validate_belongs_to_scope();
+
+                    RAISE NOTICE 'Attached trigger to BELONGS_TO edge table';
+                END IF;
+            END;
+            $$ LANGUAGE plpgsql;
+            "#,
+        )
+        .await?;
+
+        tracing::info!("Created Cypher-based trigger functions for domain constraints");
         Ok(())
     }
 }

@@ -1,6 +1,9 @@
 services:
   age:
-    image: apache/age:latest
+    build:
+      context: ./docker
+      dockerfile: Dockerfile
+    image: gnapsis-age:latest
     container_name: gnapsis-age
     environment:
       POSTGRES_USER: postgres

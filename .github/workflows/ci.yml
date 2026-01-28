@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: apache/age:release_PG16_1.5.0
+        image: apache/age:release_PG17_1.6.0
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -59,6 +59,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install pgvector in postgres container
+        run: |
+          docker exec ${{ job.services.postgres.id }} apt-get update
+          docker exec ${{ job.services.postgres.id }} apt-get install -y postgresql-17-pgvector=0.8.0-1
+
+      - name: Setup extensions
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d gnapsis_dev -c "CREATE EXTENSION IF NOT EXISTS age;"
+          psql -h localhost -U postgres -d gnapsis_dev -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          psql -h localhost -U postgres -d gnapsis_dev -c "LOAD 'age'; SET search_path = ag_catalog, public; SELECT create_graph('knowledge_graph');"
 
       - name: Install system dependencies
         run: |
@@ -78,13 +91,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-
-      - name: Setup AGE extension
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h localhost -U postgres -d gnapsis_dev -c "CREATE EXTENSION IF NOT EXISTS age;"
-          psql -h localhost -U postgres -d gnapsis_dev -c "SELECT ag_catalog.create_graph('knowledge_graph');"
 
       - name: Run integration tests
         run: cargo test --features integration --test postgres_integration

@@ -1,43 +1,31 @@
 //! Ontology V2 data migration - migrates existing DocumentReference nodes.
 
-use async_trait::async_trait;
-use neo4rs::{query, Txn};
-
 use crate::error::AppError;
-
-use super::Migration;
+use crate::graph::{CypherExecutor, QueryExt, SqlExecutor};
 
 /// Ontology V2 data migration - migrate DocumentReference to CodeReference/TextReference.
 pub struct M005OntologyV2Data;
 
-#[async_trait]
-impl Migration for M005OntologyV2Data {
-    fn id(&self) -> &'static str {
-        "m005_ontology_v2_data"
-    }
-
-    fn version(&self) -> u32 {
-        5
-    }
-
-    fn description(&self) -> &'static str {
-        "Migrate DocumentReference nodes to CodeReference/TextReference"
-    }
-
-    async fn up(&self, txn: &mut Txn) -> Result<(), AppError> {
+impl M005OntologyV2Data {
+    /// Apply the migration.
+    pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
+    where
+        T: CypherExecutor + SqlExecutor + Sync,
+    {
         self.migrate_references(txn).await
     }
-}
 
-impl M005OntologyV2Data {
     /// Migrate existing DocumentReference nodes to CodeReference or TextReference.
     ///
     /// Migration logic:
     /// - If content_type starts with "code:" -> CodeReference
     /// - Otherwise (markdown, text, etc.) -> TextReference
-    async fn migrate_references(&self, txn: &mut Txn) -> Result<(), AppError> {
+    async fn migrate_references<T: CypherExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
+        // Get current timestamp as ISO 8601 string for AGE compatibility
+        let now = chrono::Utc::now().to_rfc3339();
+
         // Migrate code references (content_type starts with "code:")
-        txn.run(query(
+        txn.query(
             "MATCH (old:DocumentReference)
              WHERE old.content_type STARTS WITH 'code:'
              WITH old
@@ -51,11 +39,10 @@ impl M005OntologyV2Data {
                  END,
                  commit_sha: coalesce(old.commit_sha, ''),
                  description: coalesce(old.description, ''),
-                 embedding: old.embedding,
                  lsp_symbol: coalesce(old.lsp_symbol, ''),
                  lsp_kind: coalesce(old.lsp_kind, 0),
                  lsp_range: coalesce(old.lsp_range, ''),
-                 created_at: coalesce(old.created_at, datetime())
+                 created_at: coalesce(old.created_at, $now)
              })
              WITH old, new
              MATCH (old)<-[r:HAS_REFERENCE]-(e:Entity)
@@ -63,11 +50,13 @@ impl M005OntologyV2Data {
              WITH old, new
              MATCH (old)-[:IN_DOCUMENT]->(d:Document)
              CREATE (new)-[:IN_DOCUMENT]->(d)",
-        ))
+        )
+        .param("now", &now)
+        .run()
         .await?;
 
         // Migrate text references (markdown, text, or anything else)
-        txn.run(query(
+        txn.query(
             "MATCH (old:DocumentReference)
              WHERE NOT old.content_type STARTS WITH 'code:'
              WITH old
@@ -77,11 +66,10 @@ impl M005OntologyV2Data {
                  content_type: coalesce(old.content_type, 'markdown'),
                  commit_sha: coalesce(old.commit_sha, ''),
                  description: coalesce(old.description, ''),
-                 embedding: old.embedding,
                  start_line: coalesce(old.start_line, 0),
                  end_line: coalesce(old.end_line, 0),
                  anchor: old.anchor,
-                 created_at: coalesce(old.created_at, datetime())
+                 created_at: coalesce(old.created_at, $now)
              })
              WITH old, new
              MATCH (old)<-[r:HAS_REFERENCE]-(e:Entity)
@@ -89,7 +77,9 @@ impl M005OntologyV2Data {
              WITH old, new
              MATCH (old)-[:IN_DOCUMENT]->(d:Document)
              CREATE (new)-[:IN_DOCUMENT]->(d)",
-        ))
+        )
+        .param("now", &now)
+        .run()
         .await?;
 
         // Note: We don't delete old DocumentReference nodes to keep migrations additive.

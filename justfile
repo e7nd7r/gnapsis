@@ -26,9 +26,13 @@ db-reset:
 db-logs:
     docker compose logs -f age
 
-# Connect to psql
+# Connect to psql (interactive)
 db-shell:
     docker compose exec age psql -U postgres -d gnapsis_dev
+
+# Run a SQL command
+db-sql cmd:
+    @docker compose exec -T age psql -U postgres -d gnapsis_dev -c "{{cmd}}"
 
 # Run a Cypher query (usage: just cypher "MATCH (n) RETURN n")
 cypher query:

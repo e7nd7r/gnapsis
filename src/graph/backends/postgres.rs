@@ -226,10 +226,24 @@ impl CypherExecutor for PostgresTransaction {
 #[async_trait]
 impl SqlExecutor for PostgresTransaction {
     async fn execute_sql(&self, sql: &str) -> Result<(), AppError> {
-        self.conn
-            .batch_execute(sql)
-            .await
-            .map_err(|e| AppError::Internal(format!("SQL execution failed: {}", e)))?;
+        self.conn.batch_execute(sql).await.map_err(|e| {
+            // Extract detailed error from PostgreSQL
+            let detail = e
+                .as_db_error()
+                .map(|db_err| {
+                    format!(
+                        "{}: {} [{}] position={:?} (detail: {:?}, hint: {:?})",
+                        db_err.severity(),
+                        db_err.message(),
+                        db_err.code().code(),
+                        db_err.position(),
+                        db_err.detail(),
+                        db_err.hint()
+                    )
+                })
+                .unwrap_or_else(|| e.to_string());
+            AppError::Internal(format!("SQL execution failed: {}", detail))
+        })?;
         Ok(())
     }
 
@@ -403,20 +417,12 @@ fn build_age_query(
     let columns_sql = match extract_return_columns(cypher) {
         Ok(columns) => {
             // Generate column definitions for SQL
-            // Each column name becomes: "column_name agtype"
-            // We need to quote column names that contain special characters
+            // Always quote column names to handle PostgreSQL reserved words (e.g., "count")
             let column_defs: Vec<String> = columns
                 .iter()
                 .map(|name| {
-                    // Quote column names that contain special characters
-                    if name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                        && !name.starts_with(|c: char| c.is_numeric())
-                    {
-                        format!("{} agtype", name)
-                    } else {
-                        // Use quoted identifier for names with special characters
-                        format!("\"{}\" agtype", name.replace('"', "\"\""))
-                    }
+                    // Always quote to avoid issues with reserved words like "count"
+                    format!("\"{}\" agtype", name.replace('"', "\"\""))
                 })
                 .collect();
             column_defs.join(", ")
@@ -454,8 +460,8 @@ fn build_age_query(
 
 /// Parses a PostgreSQL row into our generic Row type.
 ///
-/// AGE returns results as `agtype` in a column named "result".
-/// We parse the agtype and convert to JSON.
+/// AGE returns results as `agtype`. Standard PostgreSQL types are
+/// converted to their JSON equivalents.
 fn parse_pg_row(pg_row: &tokio_postgres::Row) -> Row {
     let mut data = HashMap::new();
 
@@ -471,12 +477,66 @@ fn parse_pg_row(pg_row: &tokio_postgres::Row) -> Row {
                 .map(|v| v.0)
                 .unwrap_or(JsonValue::Null)
         } else {
-            // Standard types: try JSON first, then string fallback
-            pg_row
-                .try_get::<_, JsonValue>(idx)
-                .ok()
-                .or_else(|| pg_row.try_get::<_, String>(idx).ok().map(JsonValue::String))
-                .unwrap_or(JsonValue::Null)
+            // Standard PostgreSQL types: convert to JSON based on type
+            match col_type.name() {
+                "int2" => pg_row
+                    .try_get::<_, i16>(idx)
+                    .ok()
+                    .map(|v| JsonValue::Number(v.into()))
+                    .unwrap_or(JsonValue::Null),
+                "int4" => pg_row
+                    .try_get::<_, i32>(idx)
+                    .ok()
+                    .map(|v| JsonValue::Number(v.into()))
+                    .unwrap_or(JsonValue::Null),
+                "int8" => pg_row
+                    .try_get::<_, i64>(idx)
+                    .ok()
+                    .map(|v| JsonValue::Number(v.into()))
+                    .unwrap_or(JsonValue::Null),
+                "float4" => pg_row
+                    .try_get::<_, f32>(idx)
+                    .ok()
+                    .and_then(|v| serde_json::Number::from_f64(v as f64))
+                    .map(JsonValue::Number)
+                    .unwrap_or(JsonValue::Null),
+                "float8" => pg_row
+                    .try_get::<_, f64>(idx)
+                    .ok()
+                    .and_then(serde_json::Number::from_f64)
+                    .map(JsonValue::Number)
+                    .unwrap_or(JsonValue::Null),
+                "bool" => pg_row
+                    .try_get::<_, bool>(idx)
+                    .ok()
+                    .map(JsonValue::Bool)
+                    .unwrap_or(JsonValue::Null),
+                "text" | "varchar" | "name" | "bpchar" => pg_row
+                    .try_get::<_, String>(idx)
+                    .ok()
+                    .map(JsonValue::String)
+                    .unwrap_or(JsonValue::Null),
+                "json" | "jsonb" => pg_row
+                    .try_get::<_, JsonValue>(idx)
+                    .ok()
+                    .unwrap_or(JsonValue::Null),
+                "_text" => {
+                    // Text array
+                    pg_row
+                        .try_get::<_, Vec<String>>(idx)
+                        .ok()
+                        .map(|v| JsonValue::Array(v.into_iter().map(JsonValue::String).collect()))
+                        .unwrap_or(JsonValue::Null)
+                }
+                _ => {
+                    // Fallback: try as string
+                    pg_row
+                        .try_get::<_, String>(idx)
+                        .ok()
+                        .map(JsonValue::String)
+                        .unwrap_or(JsonValue::Null)
+                }
+            }
         };
 
         data.insert(name, value);
@@ -527,10 +587,10 @@ mod tests {
         let (sql, agtype_param) =
             build_age_query("test_graph", "MATCH (n) RETURN n", &params).unwrap();
 
-        // Column name is extracted from RETURN clause
+        // Column name is extracted from RETURN clause (always quoted for safety)
         assert_eq!(
             sql,
-            "SELECT * FROM cypher('test_graph', $$ MATCH (n) RETURN n $$) as (n agtype)"
+            "SELECT * FROM cypher('test_graph', $$ MATCH (n) RETURN n $$) as (\"n\" agtype)"
         );
         assert!(agtype_param.is_none());
     }
@@ -543,10 +603,10 @@ mod tests {
         let (sql, agtype_param) =
             build_age_query("test_graph", "MATCH (n) WHERE n.id = $id RETURN n", &params).unwrap();
 
-        // Column name is extracted from RETURN clause
+        // Column name is extracted from RETURN clause (always quoted for safety)
         assert_eq!(
             sql,
-            "SELECT * FROM cypher('test_graph', $$ MATCH (n) WHERE n.id = $id RETURN n $$, $1) as (n agtype)"
+            "SELECT * FROM cypher('test_graph', $$ MATCH (n) WHERE n.id = $id RETURN n $$, $1) as (\"n\" agtype)"
         );
         let param = agtype_param.expect("Should have agtype param");
         assert!(param.0.contains("test-123"));
@@ -562,10 +622,10 @@ mod tests {
         )
         .unwrap();
 
-        // Multiple columns extracted from RETURN clause, with alias
+        // Multiple columns extracted from RETURN clause, with alias (always quoted)
         assert_eq!(
             sql,
-            "SELECT * FROM cypher('test_graph', $$ MATCH (a)-[r]->(b) RETURN a, r AS rel, b $$) as (a agtype, rel agtype, b agtype)"
+            "SELECT * FROM cypher('test_graph', $$ MATCH (a)-[r]->(b) RETURN a, r AS rel, b $$) as (\"a\" agtype, \"rel\" agtype, \"b\" agtype)"
         );
     }
 
@@ -579,10 +639,10 @@ mod tests {
         )
         .unwrap();
 
-        // Property access uses quoted identifier, alias uses plain name
+        // Property access and alias both quoted for safety
         assert_eq!(
             sql,
-            "SELECT * FROM cypher('test_graph', $$ MATCH (n) RETURN n.name, n.age AS age $$) as (\"n.name\" agtype, age agtype)"
+            "SELECT * FROM cypher('test_graph', $$ MATCH (n) RETURN n.name, n.age AS age $$) as (\"n.name\" agtype, \"age\" agtype)"
         );
     }
 

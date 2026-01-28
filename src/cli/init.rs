@@ -1,9 +1,9 @@
 //! Init command handler.
 
 use color_eyre::Result;
-use neo4rs::Graph;
 
 use crate::config::Config;
+use crate::graph::backends::postgres::PostgresClient;
 use crate::migrations::run_migrations;
 
 use super::App;
@@ -18,19 +18,18 @@ impl App {
             config.project.name
         );
 
-        // Connect to Neo4j
-        tracing::info!("Connecting to Neo4j at {}", config.neo4j.uri);
-        let graph = Graph::new(
-            &config.neo4j.uri,
-            &config.neo4j.user,
-            config.neo4j.password.as_deref().unwrap_or(""),
-        )
-        .await?;
-        tracing::info!("Connected to Neo4j");
+        // Connect to PostgreSQL + AGE
+        tracing::info!("Connecting to PostgreSQL at {}", config.postgres.uri);
+        let client = PostgresClient::connect(&config.postgres.uri, &config.postgres.graph_name)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to connect: {}", e))?;
+        tracing::info!("Connected to PostgreSQL + AGE");
 
         // Run migrations
         tracing::info!("Running migrations...");
-        let result = run_migrations(&graph).await?;
+        let result = run_migrations(&client)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("Migration failed: {}", e))?;
 
         if result.applied_migrations.is_empty() {
             tracing::info!(
