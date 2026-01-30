@@ -46,7 +46,7 @@ dimensions = 384
 name = "smoke_test"
 
 [[project.sources]]
-id = "code"
+id = "default"
 path = "<absolute path to this repo>"
 
 [[project.sources]]
@@ -109,7 +109,7 @@ Copy the source paths from the backup file. The key differences are:
 
 #### 4A: Analyze Document (discover symbols)
 
-**4A.1** Run `analyze_document` on `src/config.rs` with `source_id: "code"` to discover symbols
+**4A.1** Run `analyze_document` on `src/config.rs` with `source_id: "default"` to discover symbols
   - Verify `untracked` list contains symbols (e.g., "Config", "ProjectConfig", "Source")
   - Save the untracked symbol names for use in entity creation
 
@@ -119,7 +119,7 @@ Copy the source paths from the backup file. The key differences are:
   - `name`: "Smoke Test Domain"
   - `description`: "Temporary domain for smoke testing gnapsis"
   - `category_ids`: [`DOMAIN_CAT_ID`]
-  - `commands`: [Add code reference to `src/config.rs`, lsp_symbol "Config", source_id "code"]
+  - `commands`: [Add code reference to `src/config.rs`, lsp_symbol "Config", source_id "default"]
   - Verify: entity created with ID (save as `DOMAIN_ID`), `has_embedding` is true
   - Verify: `executed` contains the Add command result with reference ID (save as `DOMAIN_REF_ID`)
   - Verify: `failed` is null, `skipped` is empty
@@ -129,7 +129,7 @@ Copy the source paths from the backup file. The key differences are:
   - `description`: "Temporary feature for smoke testing"
   - `category_ids`: [`FEATURE_CAT_ID`]
   - `parent_ids`: [`DOMAIN_ID`]
-  - `commands`: [Add code reference to `src/config.rs`, lsp_symbol "ProjectConfig", source_id "code"]
+  - `commands`: [Add code reference to `src/config.rs`, lsp_symbol "ProjectConfig", source_id "default"]
   - Verify: entity created with ID (save as `FEATURE_ID`), parent relationship established
   - Verify: `executed` contains Add result with reference ID (save as `FEATURE_REF_ID`)
 
@@ -138,7 +138,7 @@ Copy the source paths from the backup file. The key differences are:
   - `description`: "Temporary component for smoke testing"
   - `category_ids`: [`COMPONENT_CAT_ID`]
   - `parent_ids`: [`FEATURE_ID`]
-  - `commands`: [Add code reference to `src/config.rs`, lsp_symbol "Source", source_id "code"]
+  - `commands`: [Add code reference to `src/config.rs`, lsp_symbol "Source", source_id "default"]
   - Verify: entity created with ID (save as `COMPONENT_ID`)
 
 #### 4C: Create Entity - Error Paths
@@ -329,7 +329,7 @@ Copy the source paths from the backup file. The key differences are:
 
 #### 6D: Get Document Entities
 
-**6D.1** Get entities for "src/config.rs" with source_id "code":
+**6D.1** Get entities for "src/config.rs" with source_id "default":
   - Verify: entities with references to config.rs are listed
   - Verify: reference details are included
 
@@ -340,13 +340,13 @@ Copy the source paths from the backup file. The key differences are:
 
 ### Phase 7: Document Analysis
 
-**7.1** Run `analyze_document` on `src/config.rs` with source_id "code", all options enabled:
+**7.1** Run `analyze_document` on `src/config.rs` with source_id "default", all options enabled:
   - `include_tracked`: true
   - `include_untracked`: true
   - `include_diffs`: true
   - Verify: `tracked` references appear (from Phase 4)
   - Verify: `untracked` symbols are listed
-  - Verify: `source_id` is "code" in response
+  - Verify: `source_id` is "default" in response
   - Verify: `document_type` is "code"
   - Verify: `summary` has correct counts
 
@@ -417,7 +417,7 @@ Copy the source paths from the backup file. The key differences are:
 
 #### 8D: LSP Refresh
 
-**8D.1** Run `lsp_refresh` on `src/config.rs` with source_id "code":
+**8D.1** Run `lsp_refresh` on `src/config.rs` with source_id "default":
   - Provide LSP symbols from analyze_document (Phase 7.1) untracked list
   - Include at least the symbols that have existing references (e.g., "Config", "ProjectConfig")
   - Verify: `updated_count` shows how many references were refreshed

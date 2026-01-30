@@ -19,8 +19,13 @@ name = "my-project"
 # (used by references) and a path. If no sources are configured, the current
 # directory is used as a "default" source.
 #
+# Rules:
+# - 0 sources: cwd is the implicit "default" source
+# - 1 source: implicitly the default regardless of its id
+# - 2+ sources: one must have id = "default"
+#
 # [[project.sources]]
-# id = "code"
+# id = "default"
 # path = "/path/to/code-repo"
 #
 # [[project.sources]]

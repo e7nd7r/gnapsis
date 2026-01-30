@@ -146,10 +146,52 @@ impl ProjectConfig {
         format!("gnapsis_{}", self.name)
     }
 
+    /// Validate the project configuration.
+    ///
+    /// Rules:
+    /// - 0 sources: OK — cwd is the implicit "default" source
+    /// - 1 source: OK — implicitly the default regardless of its name
+    /// - 2+ sources: at least one must have `id = "default"`
+    pub fn validate(&self) -> Result<(), String> {
+        if self.sources.len() > 1 {
+            // Check for duplicate source IDs
+            let mut seen = std::collections::HashSet::new();
+            for s in &self.sources {
+                if !seen.insert(&s.id) {
+                    return Err(format!("Duplicate source id: \"{}\"", s.id));
+                }
+            }
+
+            // At least one must be "default"
+            let has_default = self.sources.iter().any(|s| s.id == DEFAULT_SOURCE_ID);
+            if !has_default {
+                let ids: Vec<&str> = self.sources.iter().map(|s| s.id.as_str()).collect();
+                return Err(format!(
+                    "Multiple sources configured ({}) but none has id = \"{}\". \
+                     When using multiple sources, one must be the default.",
+                    ids.join(", "),
+                    DEFAULT_SOURCE_ID
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Find a source by ID.
-    /// Returns None if the source doesn't exist and it's not the default.
+    ///
+    /// When `id` is `"default"`:
+    /// - 0 sources: returns `None` (caller should fall back to cwd)
+    /// - 1 source: returns that source (implicit default)
+    /// - 2+ sources: returns the one with `id = "default"` (guaranteed by `validate()`)
     pub fn get_source(&self, id: &str) -> Option<&Source> {
-        self.sources.iter().find(|s| s.id == id)
+        self.sources.iter().find(|s| s.id == id).or_else(|| {
+            // Single source is implicitly the default
+            if id == DEFAULT_SOURCE_ID && self.sources.len() == 1 {
+                self.sources.first()
+            } else {
+                None
+            }
+        })
     }
 
     /// Get all sources, or a default source at cwd if none configured.
@@ -197,7 +239,7 @@ impl Config {
     pub fn load() -> Result<Self, ConfigError> {
         let user_config = Self::user_config_path();
 
-        Figment::new()
+        let config: Self = Figment::new()
             // Layer 1: User config (lowest priority)
             .merge(Toml::file(user_config))
             // Layer 2: Project config
@@ -205,7 +247,14 @@ impl Config {
             // Layer 3: Environment variables (highest priority)
             .merge(Env::prefixed("GNAPSIS_").split("_"))
             .extract()
-            .map_err(ConfigError::from)
+            .map_err(ConfigError::from)?;
+
+        config
+            .project
+            .validate()
+            .map_err(|msg| ConfigError::from(figment::Error::from(msg)))?;
+
+        Ok(config)
     }
 
     /// User config path: ~/.config/gnapsis/config.toml (XDG) or platform config dir.
@@ -221,5 +270,154 @@ impl Config {
         dirs::config_dir()
             .map(|p| p.join("gnapsis").join("config.toml"))
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_source(id: &str) -> Source {
+        Source {
+            id: id.to_string(),
+            path: format!("/tmp/{}", id),
+        }
+    }
+
+    fn make_project(sources: Vec<Source>) -> ProjectConfig {
+        ProjectConfig {
+            name: "test".to_string(),
+            sources,
+        }
+    }
+
+    // -- validate() tests --
+
+    #[test]
+    fn validate_zero_sources_ok() {
+        let cfg = make_project(vec![]);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_one_source_any_name_ok() {
+        let cfg = make_project(vec![make_source("code")]);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_two_sources_with_default_ok() {
+        let cfg = make_project(vec![make_source("default"), make_source("vault")]);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_two_sources_no_default_fails() {
+        let cfg = make_project(vec![make_source("code"), make_source("vault")]);
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("none has id = \"default\""), "got: {err}");
+    }
+
+    #[test]
+    fn validate_duplicate_default_ids_fails() {
+        let cfg = make_project(vec![make_source("default"), make_source("default")]);
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("Duplicate source id: \"default\""), "got: {err}");
+    }
+
+    #[test]
+    fn validate_duplicate_named_ids_fails() {
+        let cfg = make_project(vec![make_source("code"), make_source("code")]);
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("Duplicate source id: \"code\""), "got: {err}");
+    }
+
+    #[test]
+    fn validate_three_sources_no_default_fails() {
+        let cfg = make_project(vec![
+            make_source("code"),
+            make_source("vault"),
+            make_source("docs"),
+        ]);
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("code, vault, docs"), "got: {err}");
+    }
+
+    // -- get_source() tests --
+
+    #[test]
+    fn get_source_exact_match() {
+        let cfg = make_project(vec![make_source("default"), make_source("vault")]);
+        let s = cfg.get_source("vault").unwrap();
+        assert_eq!(s.id, "vault");
+    }
+
+    #[test]
+    fn get_source_single_implicit_default() {
+        let cfg = make_project(vec![make_source("code")]);
+        let s = cfg.get_source("default").unwrap();
+        assert_eq!(s.id, "code");
+    }
+
+    #[test]
+    fn get_source_single_by_actual_name() {
+        let cfg = make_project(vec![make_source("code")]);
+        let s = cfg.get_source("code").unwrap();
+        assert_eq!(s.id, "code");
+    }
+
+    #[test]
+    fn get_source_missing_returns_none() {
+        let cfg = make_project(vec![make_source("default"), make_source("vault")]);
+        assert!(cfg.get_source("nonexistent").is_none());
+    }
+
+    #[test]
+    fn get_source_zero_sources_returns_none() {
+        let cfg = make_project(vec![]);
+        assert!(cfg.get_source("default").is_none());
+    }
+
+    // -- resolve_path() tests --
+
+    #[test]
+    fn resolve_path_with_source() {
+        let cfg = make_project(vec![Source {
+            id: "default".to_string(),
+            path: "/home/user/project".to_string(),
+        }]);
+        let resolved = cfg.resolve_path("default", "src/main.rs").unwrap();
+        assert_eq!(resolved, "/home/user/project/src/main.rs");
+    }
+
+    #[test]
+    fn resolve_path_trims_trailing_slash() {
+        let cfg = make_project(vec![Source {
+            id: "default".to_string(),
+            path: "/home/user/project/".to_string(),
+        }]);
+        let resolved = cfg.resolve_path("default", "src/main.rs").unwrap();
+        assert_eq!(resolved, "/home/user/project/src/main.rs");
+    }
+
+    #[test]
+    fn resolve_path_zero_sources_uses_cwd() {
+        let cfg = make_project(vec![]);
+        let resolved = cfg.resolve_path("default", "src/main.rs").unwrap();
+        assert!(resolved.ends_with("/src/main.rs"));
+    }
+
+    #[test]
+    fn resolve_path_unknown_source_returns_none() {
+        let cfg = make_project(vec![make_source("default")]);
+        assert!(cfg.resolve_path("nonexistent", "file.rs").is_none());
+    }
+
+    // -- graph_name() test --
+
+    #[test]
+    fn graph_name_format() {
+        let cfg = make_project(vec![]);
+        assert_eq!(cfg.graph_name(), "gnapsis_test");
     }
 }
