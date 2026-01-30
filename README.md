@@ -1,6 +1,6 @@
 # Gnapsis
 
-Code intelligence graph - MCP server for semantic codebase understanding with Neo4j.
+Code intelligence graph - MCP server for semantic codebase understanding with PostgreSQL + Apache AGE.
 
 ## What is Gnapsis?
 
@@ -16,21 +16,21 @@ Think of it as a structured memory layer for AI coding assistants.
 - **Subgraph Queries**: Extract relevant context within token budgets
 - **Staleness Detection**: Know when references become outdated via git
 - **TOON Output**: Token-efficient output format (40-60% fewer tokens than JSON)
+- **Multi-Project Support**: Each project gets its own graph in a shared database
 
 ## Quick Start
 
 ### 1. Prerequisites
 
-**Neo4j 5.x** with GDS plugin:
+**PostgreSQL with Apache AGE and pgvector**:
 
 ```bash
-# Using Docker
+# Using Docker (recommended)
 docker run -d \
-  --name neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/your-password \
-  -e NEO4J_PLUGINS='["graph-data-science"]' \
-  neo4j:5
+  --name gnapsis-db \
+  -p 5432:5432 \
+  -e POSTGRES_PASSWORD=postgres \
+  apache/age:latest
 ```
 
 **Rust 1.75+** for building from source.
@@ -47,20 +47,29 @@ cargo install --path .
 
 ### 3. Configuration
 
-Create `.gnapsis.toml` in your project root (see `.gnapsis.toml.example`):
+Gnapsis uses a layered configuration approach:
+
+**Global config** (`~/.config/gnapsis/config.toml`) - database and embedding settings:
+
+```toml
+[postgres]
+uri = "postgresql://postgres:password@localhost:5432/gnapsis"
+
+[embedding]
+provider = "fastembed"
+model = "BAAI/bge-small-en-v1.5"
+dimensions = 384
+```
+
+**Project config** (`.gnapsis.toml` in your project root):
 
 ```toml
 [project]
 name = "my-project"
-
-[neo4j]
-uri = "bolt://localhost:7687"
-username = "neo4j"
-password = "your-password"
-database = "neo4j"
+# graph = "gnapsis_my_project"  # Optional, defaults to gnapsis_<name>
 ```
 
-Or use environment variables: `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`.
+Or use environment variables: `GNAPSIS_POSTGRES_URI`, `GNAPSIS_PROJECT_NAME`.
 
 ### 4. MCP Setup
 

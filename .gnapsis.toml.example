@@ -1,18 +1,43 @@
 # Gnapsis Configuration Example
-# Copy this file to .gnapsis.toml and update with your settings
+#
+# Gnapsis uses a layered configuration approach:
+# 1. Global config: ~/.config/gnapsis/config.toml (database, embedding settings)
+# 2. Project config: .gnapsis.toml (project name, graph)
+# 3. Environment variables: GNAPSIS_* (highest priority)
+#
+# This file is an example PROJECT config. Copy to .gnapsis.toml in your project root.
 
 [project]
+# Project name (required). Graph name is always gnapsis_<name>.
 name = "my-project"
 
-[neo4j]
-uri = "bolt://localhost:7687"
-username = "neo4j"
-password = "your-password"
-database = "neo4j"
 
-# Alternatively, use environment variables:
-# NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE
+# ==============================================================================
+# SOURCES
+# ==============================================================================
+# Sources define directories containing project files. Each source has an ID
+# (used by references) and a path. If no sources are configured, the current
+# directory is used as a "default" source.
+#
+# [[project.sources]]
+# id = "code"
+# path = "/path/to/code-repo"
+#
+# [[project.sources]]
+# id = "docs"
+# path = "/path/to/documentation-vault"
 
-[embedding]
-# Model for generating embeddings (default: BAAI/bge-small-en-v1.5)
+
+# ==============================================================================
+# GLOBAL CONFIG EXAMPLE (~/.config/gnapsis/config.toml)
+# ==============================================================================
+# The following settings typically go in your global config file, not in
+# project configs. This keeps credentials out of your repositories.
+#
+# [postgres]
+# uri = "postgresql://postgres:password@localhost:5432/gnapsis"
+#
+# [embedding]
+# provider = "fastembed"
 # model = "BAAI/bge-small-en-v1.5"
+# dimensions = 384

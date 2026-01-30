@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::mcp::protocol::{OutputFormat, Response};
 use crate::mcp::server::McpServer;
+use crate::migrations::run_migrations;
 use crate::models::{Category, ProjectEntitySummary};
 use crate::repositories::{CategoryRepository, QueryRepository, SchemaRepository};
 
@@ -51,12 +52,14 @@ pub struct ProjectOverviewParams {
 /// Result of project initialization.
 #[derive(Debug, Serialize)]
 pub struct InitProjectResult {
-    /// Schema version before migration.
-    pub previous_version: u32,
-    /// Schema version after migration.
-    pub current_version: u32,
-    /// List of migrations that were applied.
-    pub applied_migrations: Vec<String>,
+    /// Database schema version after migration.
+    pub db_version: u32,
+    /// Graph schema version after migration.
+    pub graph_version: u32,
+    /// List of DB migrations that were applied.
+    pub applied_db_migrations: Vec<String>,
+    /// List of graph migrations that were applied.
+    pub applied_graph_migrations: Vec<String>,
     /// Whether the project was already initialized.
     pub was_initialized: bool,
 }
@@ -183,34 +186,41 @@ impl McpServer {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!("Running init_project tool");
 
-        let schema_repo = self.resolve::<SchemaRepository>();
+        // Ensure graph exists FIRST (creates if not present)
+        let client = self.ctx.graph.client();
+        let graph_name = self.ctx.config.project.graph_name();
 
-        // Check if already initialized
+        tracing::info!("Ensuring graph '{}' exists...", graph_name);
+        client.ensure_graph_exists().await.map_err(|e| {
+            McpError::internal_error(format!("Failed to create graph: {}", e), None)
+        })?;
+
+        // Now check if already initialized (requires graph to exist)
+        let schema_repo = self.resolve::<SchemaRepository>();
         let was_initialized = schema_repo
             .is_initialized()
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         // Run migrations
-        // TODO: EPIC004-F4 - Update Context to use PostgresClient instead of neo4rs::Graph
-        // For now, migrations must be run via CLI or the postgres integration test
-        let result = crate::migrations::MigrationResult {
-            previous_version: 0,
-            current_version: 0,
-            applied_migrations: vec![],
-        };
+        tracing::info!("Running migrations...");
+        let result = run_migrations(client, &graph_name)
+            .await
+            .map_err(|e| McpError::internal_error(format!("Migration failed: {}", e), None))?;
 
         let response = InitProjectResult {
-            previous_version: result.previous_version,
-            current_version: result.current_version,
-            applied_migrations: result.applied_migrations,
+            db_version: result.db_version,
+            graph_version: result.graph_version,
+            applied_db_migrations: result.applied_db_migrations,
+            applied_graph_migrations: result.applied_graph_migrations,
             was_initialized,
         };
 
         tracing::info!(
-            previous = response.previous_version,
-            current = response.current_version,
-            applied = ?response.applied_migrations,
+            db_version = response.db_version,
+            graph_version = response.graph_version,
+            applied_db = ?response.applied_db_migrations,
+            applied_graph = ?response.applied_graph_migrations,
             "Project initialization complete"
         );
 

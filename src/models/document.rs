@@ -27,7 +27,10 @@ pub struct Document {
 pub struct CodeReference {
     /// Unique identifier (ULID).
     pub id: String,
-    /// Path to the document (relative to repository root).
+    /// Source ID indicating which source this reference belongs to.
+    #[serde(default)]
+    pub source_id: String,
+    /// Path to the document (relative to source root).
     pub path: String,
     /// Programming language (e.g., "rust", "typescript").
     pub language: String,
@@ -55,7 +58,10 @@ pub struct CodeReference {
 pub struct TextReference {
     /// Unique identifier (ULID).
     pub id: String,
-    /// Path to the document (relative to repository root).
+    /// Source ID indicating which source this reference belongs to.
+    #[serde(default)]
+    pub source_id: String,
+    /// Path to the document (relative to source root).
     pub path: String,
     /// Content type (e.g., "markdown", "text").
     #[serde(default = "default_content_type")]
@@ -129,7 +135,15 @@ impl Reference {
         }
     }
 
-    /// Get the document path.
+    /// Get the source ID.
+    pub fn source_id(&self) -> &str {
+        match self {
+            Reference::Code(r) => &r.source_id,
+            Reference::Text(r) => &r.source_id,
+        }
+    }
+
+    /// Get the document path (relative to source).
     pub fn path(&self) -> &str {
         match self {
             Reference::Code(r) => &r.path,

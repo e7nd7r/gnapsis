@@ -120,7 +120,10 @@ impl LinkType {
 pub enum NewReference {
     /// Code reference with LSP metadata.
     Code {
-        /// Path to the source file.
+        /// Source ID from project config (defaults to "default" if not specified).
+        #[serde(default = "crate::config::default_source_id")]
+        source_id: String,
+        /// Path to the source file (relative to source root).
         document_path: String,
         /// LSP symbol name (e.g., "impl Foo::bar").
         lsp_symbol: String,
@@ -136,7 +139,10 @@ pub enum NewReference {
 
     /// Text/documentation reference with line range.
     Text {
-        /// Path to the document.
+        /// Source ID from project config (defaults to "default" if not specified).
+        #[serde(default = "crate::config::default_source_id")]
+        source_id: String,
+        /// Path to the document (relative to source root).
         document_path: String,
         /// Description of what this reference points to.
         description: String,
@@ -151,6 +157,14 @@ pub enum NewReference {
 }
 
 impl NewReference {
+    /// Get the source ID for this reference.
+    pub fn source_id(&self) -> &str {
+        match self {
+            NewReference::Code { source_id, .. } => source_id,
+            NewReference::Text { source_id, .. } => source_id,
+        }
+    }
+
     /// Get the document path for this reference.
     pub fn document_path(&self) -> &str {
         match self {
@@ -532,6 +546,7 @@ impl CommandService {
 
         let reference_id = match new_ref {
             NewReference::Code {
+                source_id,
                 document_path,
                 lsp_symbol,
                 description,
@@ -553,6 +568,7 @@ impl CommandService {
 
                 let params = CreateCodeReferenceParams {
                     entity_id,
+                    source_id,
                     path: document_path,
                     language: "unknown", // Will be determined by file extension
                     commit_sha: &commit_sha,
@@ -572,6 +588,7 @@ impl CommandService {
                 code_ref.id
             }
             NewReference::Text {
+                source_id,
                 document_path,
                 description,
                 start_line,
@@ -582,6 +599,7 @@ impl CommandService {
 
                 let params = CreateTextReferenceParams {
                     entity_id,
+                    source_id,
                     path: document_path,
                     content_type: "markdown",
                     commit_sha: &commit_sha,
@@ -794,6 +812,7 @@ mod tests {
     #[test]
     fn test_new_reference_serialization() {
         let code_ref = NewReference::Code {
+            source_id: "code".to_string(),
             document_path: "src/main.rs".to_string(),
             lsp_symbol: "fn main".to_string(),
             description: "Main entry point".to_string(),
@@ -802,8 +821,10 @@ mod tests {
         };
         let json = serde_json::to_string(&code_ref).unwrap();
         assert!(json.contains("\"ref_type\":\"code\""));
+        assert!(json.contains("\"source_id\":\"code\""));
 
         let text_ref = NewReference::Text {
+            source_id: "docs".to_string(),
             document_path: "README.md".to_string(),
             description: "Project overview".to_string(),
             start_line: 1,
@@ -812,6 +833,7 @@ mod tests {
         };
         let json = serde_json::to_string(&text_ref).unwrap();
         assert!(json.contains("\"ref_type\":\"text\""));
+        assert!(json.contains("\"source_id\":\"docs\""));
     }
 
     #[test]

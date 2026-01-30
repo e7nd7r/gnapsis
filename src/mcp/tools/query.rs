@@ -90,6 +90,9 @@ pub struct FindEntitiesParams {
 pub struct GetDocumentEntitiesParams {
     /// Document path to search.
     pub document_path: String,
+    /// Source ID from project config. Defaults to "default" if not specified.
+    #[serde(default = "crate::config::default_source_id")]
+    pub source_id: String,
 }
 
 /// What to search: entities, references, or both.

@@ -26,9 +26,13 @@ impl App {
         );
 
         // Connect to PostgreSQL + Apache AGE
-        tracing::debug!("Connecting to PostgreSQL at {}", config.postgres.uri);
-        let client =
-            PostgresClient::connect(&config.postgres.uri, &config.postgres.graph_name).await?;
+        let graph_name = config.project.graph_name();
+        tracing::debug!(
+            "Connecting to PostgreSQL at {} (graph: {})",
+            config.postgres.uri,
+            graph_name
+        );
+        let client = PostgresClient::connect(&config.postgres.uri, &graph_name).await?;
         let graph = Graph::new(client);
         tracing::debug!("Connected to PostgreSQL + AGE");
 

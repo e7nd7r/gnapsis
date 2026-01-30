@@ -1,37 +1,30 @@
 //! Ontology V2 data migration - migrates existing DocumentReference nodes.
 
-use async_trait::async_trait;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 
 use crate::error::AppError;
 use crate::graph::Query;
-use crate::migrations::{Migration, MigrationContext};
+use crate::migrations::{GraphMigration, GraphMigrationContext, Migration};
 
-/// Ontology V2 data migration - migrate DocumentReference to CodeReference/TextReference.
-pub struct M004OntologyV2Data {
+pub struct M003OntologyV2Data {
     graph_name: String,
 }
 
-impl M004OntologyV2Data {
-    /// Create a new ontology V2 data migration for the given graph.
+impl M003OntologyV2Data {
     pub fn new(graph_name: &str) -> Self {
         Self {
             graph_name: graph_name.to_string(),
         }
     }
 
-    /// Migrate existing DocumentReference nodes to CodeReference or TextReference.
-    ///
-    /// Migration logic:
-    /// - If content_type starts with "code:" -> CodeReference
-    /// - Otherwise (markdown, text, etc.) -> TextReference
     async fn migrate_references(
         &self,
-        ctx: &(dyn MigrationContext + Sync),
+        ctx: &(dyn GraphMigrationContext + Sync),
     ) -> Result<(), AppError> {
-        // Get current timestamp as ISO 8601 string for AGE compatibility
         let now = chrono::Utc::now().to_rfc3339();
 
-        // Migrate code references (content_type starts with "code:")
+        // Migrate code references
         Query::new(
             ctx,
             "MATCH (old:DocumentReference)
@@ -63,7 +56,7 @@ impl M004OntologyV2Data {
         .run()
         .await?;
 
-        // Migrate text references (markdown, text, or anything else)
+        // Migrate text references
         Query::new(
             ctx,
             "MATCH (old:DocumentReference)
@@ -91,33 +84,31 @@ impl M004OntologyV2Data {
         .run()
         .await?;
 
-        // Note: We don't delete old DocumentReference nodes to keep migrations additive.
-        // They can be cleaned up manually or in a future cleanup task.
-
         tracing::info!("Migrated DocumentReference nodes to CodeReference and TextReference");
         Ok(())
     }
 }
 
-#[async_trait]
-impl Migration for M004OntologyV2Data {
+impl Migration for M003OntologyV2Data {
+    type Context = dyn GraphMigrationContext + Sync;
+
     fn id(&self) -> &'static str {
-        "m004_ontology_v2_data"
+        "graph003_ontology_v2_data"
     }
-
     fn version(&self) -> u32 {
-        4
+        3
     }
-
     fn description(&self) -> &'static str {
-        "Migrate DocumentReference nodes to CodeReference/TextReference"
+        "Migrate DocumentReference to CodeReference/TextReference"
     }
 
+    fn up<'a>(&'a self, ctx: &'a Self::Context) -> BoxFuture<'a, Result<(), AppError>> {
+        async move { self.migrate_references(ctx).await }.boxed()
+    }
+}
+
+impl GraphMigration for M003OntologyV2Data {
     fn graph_name(&self) -> &str {
         &self.graph_name
-    }
-
-    async fn up(&self, ctx: &(dyn MigrationContext + Sync)) -> Result<(), AppError> {
-        self.migrate_references(ctx).await
     }
 }

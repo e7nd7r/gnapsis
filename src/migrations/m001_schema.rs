@@ -1,44 +1,24 @@
-//! Schema migration - AGE graph creation and indexes.
+//! Schema migration - indexes and extensions.
+//!
+//! Note: Graph creation is handled by `PostgresClient::ensure_graph_exists()`
+//! before migrations run. This migration sets up indexes and extensions.
+
+use async_trait::async_trait;
 
 use crate::error::AppError;
-use crate::graph::{CypherExecutor, SqlExecutor};
+use crate::migrations::{Migration, MigrationContext};
 
-/// Schema setup migration (DDL only - graph creation and indexes).
-pub struct M001Schema;
+/// Schema setup migration (DDL only - indexes and extensions).
+pub struct M001Schema {
+    graph_name: String,
+}
 
 impl M001Schema {
-    /// Apply the migration.
-    pub async fn up<T>(&self, txn: &T) -> Result<(), AppError>
-    where
-        T: CypherExecutor + SqlExecutor + Sync,
-    {
-        self.create_graph(txn).await?;
-        self.create_indexes(txn).await?;
-        Ok(())
-    }
-
-    /// Create the AGE graph.
-    ///
-    /// Uses `create_graph` if it doesn't exist.
-    /// AGE requires the graph to exist before running Cypher queries.
-    async fn create_graph<T: SqlExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
-        // Check if graph exists first, create if not
-        // AGE doesn't have IF NOT EXISTS for create_graph, so we check manually
-        txn.execute_sql(
-            r#"
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM ag_catalog.ag_graph WHERE name = 'knowledge_graph'
-                ) THEN
-                    PERFORM ag_catalog.create_graph('knowledge_graph');
-                END IF;
-            END $$;
-            "#,
-        )
-        .await?;
-
-        Ok(())
+    /// Create a new schema migration for the given graph.
+    pub fn new(graph_name: &str) -> Self {
+        Self {
+            graph_name: graph_name.to_string(),
+        }
     }
 
     /// Create indexes for efficient lookups.
@@ -48,17 +28,17 @@ impl M001Schema {
     ///
     /// Note: AGE label tables are created lazily when nodes of that type are first created.
     /// These indexes will be applied after the seed data migration creates the labels.
-    async fn create_indexes<T: SqlExecutor + Sync>(&self, txn: &T) -> Result<(), AppError> {
+    async fn create_indexes(&self, ctx: &(dyn MigrationContext + Sync)) -> Result<(), AppError> {
         // AGE stores node properties in an 'properties' column of type agtype
         // We'll create indexes after labels exist (in a later migration or via triggers)
         //
         // For now, we create the pgvector extension for embedding support
-        txn.execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
+        ctx.execute_sql("CREATE EXTENSION IF NOT EXISTS vector")
             .await?;
 
         // Create embeddings table for vector search
         // Separate from graph for efficient vector operations with pgvector
-        txn.execute_sql(
+        ctx.execute_sql(
             r#"
             CREATE TABLE IF NOT EXISTS embeddings (
                 id TEXT PRIMARY KEY,
@@ -77,6 +57,30 @@ impl M001Schema {
         )
         .await?;
 
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Migration for M001Schema {
+    fn id(&self) -> &'static str {
+        "m001_schema"
+    }
+
+    fn version(&self) -> u32 {
+        1
+    }
+
+    fn description(&self) -> &'static str {
+        "Schema setup (indexes and extensions)"
+    }
+
+    fn graph_name(&self) -> &str {
+        &self.graph_name
+    }
+
+    async fn up(&self, ctx: &(dyn MigrationContext + Sync)) -> Result<(), AppError> {
+        self.create_indexes(ctx).await?;
         Ok(())
     }
 }
