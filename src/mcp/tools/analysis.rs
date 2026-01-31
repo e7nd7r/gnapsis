@@ -30,6 +30,9 @@ use crate::services::LspService;
 pub struct AnalyzeDocumentParams {
     /// Path to the document to analyze.
     pub document_path: String,
+    /// Source ID from project config. Defaults to "default" if not specified.
+    #[serde(default = "crate::config::default_source_id")]
+    pub source_id: String,
     /// Include tracked references (default: true).
     #[serde(default = "default_true")]
     pub include_tracked: Option<bool>,
@@ -78,6 +81,8 @@ pub struct LspSymbolInput {
 pub struct AnalyzeDocumentResult {
     /// Path to the analyzed document.
     pub document_path: String,
+    /// Source ID this document belongs to.
+    pub source_id: String,
     /// Document type: "code" or "text".
     pub document_type: String,
     /// Current HEAD commit SHA.
@@ -301,6 +306,7 @@ impl McpServer {
 
         let result = AnalyzeDocumentResult {
             document_path: params.document_path,
+            source_id: params.source_id,
             document_type,
             current_commit: head_sha,
             tracked,

@@ -118,6 +118,9 @@ pub enum EntityCommandInput {
 pub enum NewReferenceInput {
     /// Code reference with LSP metadata.
     Code {
+        /// Source ID from project config (defaults to "default" if not specified).
+        #[serde(default = "crate::config::default_source_id")]
+        source_id: String,
         /// Path to the source file.
         document_path: String,
         /// LSP symbol name (e.g., "impl Foo::bar").
@@ -133,6 +136,9 @@ pub enum NewReferenceInput {
     },
     /// Text reference with line range.
     Text {
+        /// Source ID from project config (defaults to "default" if not specified).
+        #[serde(default = "crate::config::default_source_id")]
+        source_id: String,
         /// Path to the document.
         document_path: String,
         /// Description of what this reference points to.
@@ -239,12 +245,14 @@ impl From<NewReferenceInput> for NewReference {
     fn from(input: NewReferenceInput) -> Self {
         match input {
             NewReferenceInput::Code {
+                source_id,
                 document_path,
                 lsp_symbol,
                 description,
                 start_line,
                 end_line,
             } => NewReference::Code {
+                source_id,
                 document_path,
                 lsp_symbol,
                 description,
@@ -252,12 +260,14 @@ impl From<NewReferenceInput> for NewReference {
                 end_line,
             },
             NewReferenceInput::Text {
+                source_id,
                 document_path,
                 description,
                 start_line,
                 end_line,
                 anchor,
             } => NewReference::Text {
+                source_id,
                 document_path,
                 description,
                 start_line,

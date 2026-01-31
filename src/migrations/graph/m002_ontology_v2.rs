@@ -1,103 +1,71 @@
 //! Ontology V2 schema migration - indexes for CodeReference and TextReference.
 
-use async_trait::async_trait;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 
 use crate::error::AppError;
-use crate::migrations::{Migration, MigrationContext};
+use crate::migrations::{GraphMigration, GraphMigrationContext, Migration};
 
-/// Ontology V2 schema migration - indexes for new reference types.
-pub struct M003OntologyV2 {
+pub struct M002OntologyV2 {
     graph_name: String,
 }
 
-impl M003OntologyV2 {
-    /// Create a new ontology V2 migration for the given graph.
+impl M002OntologyV2 {
     pub fn new(graph_name: &str) -> Self {
         Self {
             graph_name: graph_name.to_string(),
         }
     }
 
-    /// Create indexes for CodeReference and TextReference nodes.
-    ///
-    /// In AGE, we create PostgreSQL indexes on the label tables.
-    /// These tables are created lazily, so we use a helper function
-    /// that checks if the table exists before creating indexes.
-    ///
-    /// Note: AGE stores properties as `agtype`. To index, we use
-    /// `ag_catalog.agtype_access_operator` which extracts values.
     async fn create_reference_indexes(
         &self,
-        ctx: &(dyn MigrationContext + Sync),
+        ctx: &(dyn GraphMigrationContext + Sync),
     ) -> Result<(), AppError> {
         let graph = &self.graph_name;
 
-        // Create a function to set up reference indexes
-        // This can be called again later if needed
-        // Note: AGE uses agtype for properties, so we use agtype_access_operator
         let sql = format!(
             r#"
             CREATE OR REPLACE FUNCTION create_reference_indexes_{graph}()
             RETURNS void AS $$
             BEGIN
-                -- CodeReference indexes
                 IF EXISTS (
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = '{graph}' AND table_name = 'CodeReference'
                 ) THEN
-                    -- Index on id property for lookups (using agtype accessor)
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_codereference_id
                         ON {graph}."CodeReference" ((ag_catalog.agtype_access_operator(properties, ''"id"'')::text))';
-
-                    -- Index on path for file-based queries
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_codereference_path
                         ON {graph}."CodeReference" ((ag_catalog.agtype_access_operator(properties, ''"path"'')::text))';
-
-                    RAISE NOTICE 'Created indexes on CodeReference table';
                 END IF;
 
-                -- TextReference indexes
                 IF EXISTS (
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = '{graph}' AND table_name = 'TextReference'
                 ) THEN
-                    -- Index on id property for lookups
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_textreference_id
                         ON {graph}."TextReference" ((ag_catalog.agtype_access_operator(properties, ''"id"'')::text))';
-
-                    -- Index on path for file-based queries
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_textreference_path
                         ON {graph}."TextReference" ((ag_catalog.agtype_access_operator(properties, ''"path"'')::text))';
-
-                    RAISE NOTICE 'Created indexes on TextReference table';
                 END IF;
 
-                -- Entity indexes (may not have been created in M001 if table didn't exist)
                 IF EXISTS (
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = '{graph}' AND table_name = 'Entity'
                 ) THEN
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_entity_id
                         ON {graph}."Entity" ((ag_catalog.agtype_access_operator(properties, ''"id"'')::text))';
-
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_entity_name
                         ON {graph}."Entity" ((ag_catalog.agtype_access_operator(properties, ''"name"'')::text))';
-
-                    RAISE NOTICE 'Created indexes on Entity table';
                 END IF;
 
-                -- Category indexes
                 IF EXISTS (
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = '{graph}' AND table_name = 'Category'
                 ) THEN
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_category_id
                         ON {graph}."Category" ((ag_catalog.agtype_access_operator(properties, ''"id"'')::text))';
-
                     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_{graph}_category_name
                         ON {graph}."Category" ((ag_catalog.agtype_access_operator(properties, ''"name"'')::text))';
-
-                    RAISE NOTICE 'Created indexes on Category table';
                 END IF;
             END;
             $$ LANGUAGE plpgsql;
@@ -106,39 +74,34 @@ impl M003OntologyV2 {
         );
 
         ctx.execute_sql(&sql).await?;
+        ctx.execute_sql(&format!("SELECT create_reference_indexes_{}()", graph))
+            .await?;
 
-        // Try to create indexes now (tables may exist from previous migrations)
-        let call_sql = format!("SELECT create_reference_indexes_{}()", graph);
-        ctx.execute_sql(&call_sql).await?;
-
-        tracing::info!(
-            "Created reference index setup function and applied available indexes for graph '{}'",
-            graph
-        );
+        tracing::info!("Created reference indexes for graph '{}'", graph);
         Ok(())
     }
 }
 
-#[async_trait]
-impl Migration for M003OntologyV2 {
+impl Migration for M002OntologyV2 {
+    type Context = dyn GraphMigrationContext + Sync;
+
     fn id(&self) -> &'static str {
-        "m003_ontology_v2"
+        "graph002_ontology_v2"
     }
-
     fn version(&self) -> u32 {
-        3
+        2
     }
-
     fn description(&self) -> &'static str {
-        "Ontology V2 schema (CodeReference and TextReference indexes)"
+        "Ontology V2 schema (reference indexes)"
     }
 
+    fn up<'a>(&'a self, ctx: &'a Self::Context) -> BoxFuture<'a, Result<(), AppError>> {
+        async move { self.create_reference_indexes(ctx).await }.boxed()
+    }
+}
+
+impl GraphMigration for M002OntologyV2 {
     fn graph_name(&self) -> &str {
         &self.graph_name
-    }
-
-    async fn up(&self, ctx: &(dyn MigrationContext + Sync)) -> Result<(), AppError> {
-        self.create_reference_indexes(ctx).await?;
-        Ok(())
     }
 }

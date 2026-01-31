@@ -225,10 +225,17 @@ Atom = {
     | (ANY_KW ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
     | (NONE ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
     | (SINGLE ~ "(" ~ SP? ~ FilterExpression ~ SP? ~ ")")
+    | ExistentialSubquery
     | RelationshipsPattern
     | ParenthesizedExpression
     | FunctionInvocation
     | Variable
+}
+
+// EXISTS { subquery } - existential subquery for pattern existence checks
+// See: openCypher basic-grammar.xml lines 428-438
+ExistentialSubquery = {
+    EXISTS ~ "{" ~ SP? ~ (RegularQuery | (Pattern ~ Where?)) ~ SP? ~ "}"
 }
 
 Literal = {

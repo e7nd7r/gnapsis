@@ -1296,4 +1296,81 @@ mod tests {
         let cols = extract_return_columns("RETURN .5 AS half").unwrap();
         assert_eq!(cols, vec!["half"]);
     }
+
+    // --- Existential Subquery (EXISTS { }) ---
+    // See: openCypher basic-grammar.xml lines 428-438
+    //
+    // EXISTS { } can contain either:
+    // 1. A full RegularQuery (with RETURN)
+    // 2. Just a Pattern with optional WHERE
+
+    #[test]
+    fn test_exists_subquery_with_pattern() {
+        // EXISTS { pattern } syntax - just a pattern, no MATCH/RETURN
+        let cols = extract_return_columns(
+            "MATCH (n) WHERE EXISTS { (n)-[:KNOWS]->(m:Person) } RETURN n.name",
+        )
+        .unwrap();
+        assert_eq!(cols, vec!["n.name"]);
+    }
+
+    #[test]
+    fn test_exists_subquery_with_pattern_and_where() {
+        // EXISTS { pattern WHERE condition } syntax
+        let cols = extract_return_columns(
+            "MATCH (n) WHERE EXISTS { (n)-[:KNOWS]->(m) WHERE m.age > 21 } RETURN n",
+        )
+        .unwrap();
+        assert_eq!(cols, vec!["n"]);
+    }
+
+    #[test]
+    fn test_exists_subquery_full_query() {
+        // EXISTS { full query with RETURN } syntax
+        let cols = extract_return_columns(
+            "MATCH (n) WHERE EXISTS { MATCH (n)-[:FRIEND]->(f) WHERE f.active = true RETURN f } RETURN n",
+        )
+        .unwrap();
+        assert_eq!(cols, vec!["n"]);
+    }
+
+    #[test]
+    fn test_exists_subquery_cycle_detection() {
+        // Pattern for cycle detection (entity reaches itself)
+        let cols = extract_return_columns(
+            "MATCH (e:Entity) WHERE EXISTS { (e)-[:BELONGS_TO*]->(e) } RETURN e.id AS id",
+        )
+        .unwrap();
+        assert_eq!(cols, vec!["id"]);
+    }
+
+    #[test]
+    fn test_not_exists_subquery() {
+        // NOT EXISTS { pattern } syntax for negative pattern matching
+        let cols = extract_return_columns(
+            "MATCH (e:Entity) WHERE NOT EXISTS { (e)-[:BELONGS_TO]->(:Entity) } RETURN e.id",
+        )
+        .unwrap();
+        assert_eq!(cols, vec!["e.id"]);
+    }
+
+    #[test]
+    fn test_exists_subquery_in_return() {
+        // EXISTS { } can also be used in RETURN
+        let cols = extract_return_columns(
+            "MATCH (n) RETURN n.name, EXISTS { (n)-[:KNOWS]->() } AS has_friends",
+        )
+        .unwrap();
+        assert_eq!(cols, vec!["n.name", "has_friends"]);
+    }
+
+    #[test]
+    fn test_exists_subquery_multiple_patterns() {
+        // EXISTS { multiple patterns }
+        let cols = extract_return_columns(
+            "MATCH (n) WHERE EXISTS { (n)-[:A]->(x), (x)-[:B]->(y) } RETURN n",
+        )
+        .unwrap();
+        assert_eq!(cols, vec!["n"]);
+    }
 }

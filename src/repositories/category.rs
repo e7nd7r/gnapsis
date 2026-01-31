@@ -21,6 +21,7 @@ impl CategoryRepository {
         description: Option<&str>,
     ) -> Result<Category, AppError> {
         let id = generate_ulid();
+        let now = chrono::Utc::now().to_rfc3339();
 
         self.graph
             .query(
@@ -29,13 +30,14 @@ impl CategoryRepository {
                      id: $id,
                      name: $name,
                      description: $description,
-                     created_at: toString(datetime())
+                     created_at: $now
                  })-[:IN_SCOPE]->(s)",
             )
             .param("id", &id)
             .param("name", name)
             .param("scope", scope.to_string())
             .param("description", description)
+            .param("now", &now)
             .run()
             .await?;
 

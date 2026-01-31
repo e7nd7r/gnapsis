@@ -449,34 +449,46 @@ mod migration_tests {
     async fn test_run_migrations() {
         let client = create_client().await;
 
+        // Ensure graph exists before running migrations
+        client
+            .ensure_graph_exists()
+            .await
+            .expect("Should ensure graph exists");
+
         // Run migrations
-        let result = run_migrations(&client)
+        let result = run_migrations(&client, TEST_GRAPH)
             .await
             .expect("Migrations should succeed");
 
         println!("Migration result: {:?}", result);
 
-        // On a fresh db (after db-reset), we should apply all 4 migrations
+        // On a fresh db (after db-reset), we should apply:
+        // - 1 DB migration (db001_schema)
+        // - 3 graph migrations (graph001_seed_data, graph002_ontology_v2, graph003_ontology_v2_data)
         // On subsequent runs, we may apply 0 if already at latest version
         assert!(
-            result.current_version >= 4,
-            "Should be at version 4 or higher"
+            result.db_version >= 1,
+            "DB should be at version 1 or higher"
+        );
+        assert!(
+            result.graph_version >= 3,
+            "Graph should be at version 3 or higher"
         );
 
-        // Verify schema_version table exists and has correct version
+        // Verify db_schema_version table exists and has correct version
         let txn = client.begin().await.expect("Failed to begin transaction");
         let rows: Vec<_> = txn
-            .query_sql("SELECT version, applied_migrations FROM schema_version WHERE id = 1")
+            .query_sql("SELECT version, applied_migrations FROM db_schema_version WHERE id = 1")
             .await
-            .expect("Should query schema_version")
+            .expect("Should query db_schema_version")
             .try_collect()
             .await
             .expect("Should collect rows");
         txn.commit().await.expect("Failed to commit");
 
-        assert_eq!(rows.len(), 1, "Should have one schema_version row");
+        assert_eq!(rows.len(), 1, "Should have one db_schema_version row");
         let version: i64 = rows[0].get("version").expect("Should have version");
-        assert!(version >= 4, "Version should be >= 4");
+        assert!(version >= 1, "DB version should be >= 1");
 
         // Verify the AGE graph exists
         let txn = client.begin().await.expect("Failed to begin transaction");
@@ -540,26 +552,41 @@ mod migration_tests {
     async fn test_migrations_are_idempotent() {
         let client = create_client().await;
 
+        // Ensure graph exists before running migrations
+        client
+            .ensure_graph_exists()
+            .await
+            .expect("Should ensure graph exists");
+
         // Run migrations twice
-        let result1 = run_migrations(&client)
+        let result1 = run_migrations(&client, TEST_GRAPH)
             .await
             .expect("First migration run should succeed");
 
-        let result2 = run_migrations(&client)
+        let result2 = run_migrations(&client, TEST_GRAPH)
             .await
             .expect("Second migration run should succeed");
 
         // Second run should apply 0 migrations (already up to date)
         assert_eq!(
-            result2.applied_migrations.len(),
+            result2.applied_db_migrations.len(),
             0,
-            "Second run should not apply any migrations"
+            "Second run should not apply any DB migrations"
+        );
+        assert_eq!(
+            result2.applied_graph_migrations.len(),
+            0,
+            "Second run should not apply any graph migrations"
         );
 
         // Versions should match
         assert_eq!(
-            result1.current_version, result2.current_version,
-            "Versions should match"
+            result1.db_version, result2.db_version,
+            "DB versions should match"
+        );
+        assert_eq!(
+            result1.graph_version, result2.graph_version,
+            "Graph versions should match"
         );
     }
 }

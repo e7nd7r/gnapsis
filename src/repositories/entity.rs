@@ -70,6 +70,7 @@ impl EntityRepository {
         embedding: Option<&[f32]>,
     ) -> Result<Entity, AppError> {
         let embedding_json = embedding.map(|e| serde_json::to_value(e).unwrap_or_default());
+        let now = chrono::Utc::now().to_rfc3339();
 
         let row = self
             .graph
@@ -78,12 +79,13 @@ impl EntityRepository {
                  SET e.name = coalesce($name, e.name),
                      e.description = coalesce($description, e.description),
                      e.embedding = coalesce($embedding, e.embedding),
-                     e.updated_at = toString(datetime())
+                     e.updated_at = $now
                  RETURN e",
             )
             .param("id", id)
             .param("name", name)
             .param("description", description)
+            .param("now", &now)
             .param_raw(
                 "embedding",
                 embedding_json.unwrap_or(serde_json::Value::Null),
@@ -108,52 +110,45 @@ impl EntityRepository {
             return Err(AppError::HasChildren(id.to_string()));
         }
 
-        // Cascade delete references
-        self.delete_entity_references(id).await?;
-
-        // Delete the entity
-        let row = self
+        // Verify entity exists before deleting
+        let exists = self
             .graph
-            .query(
-                "MATCH (e:Entity {id: $id})
-                 DETACH DELETE e
-                 RETURN count(*) AS deleted",
-            )
+            .query("MATCH (e:Entity {id: $id}) RETURN e.id AS id")
             .param("id", id)
             .fetch_one()
             .await?;
 
-        match row {
-            Some(row) => {
-                let deleted: i64 = row.get("deleted")?;
-                if deleted == 0 {
-                    return Err(AppError::EntityNotFound(id.to_string()));
-                }
-                Ok(())
-            }
-            None => Err(AppError::EntityNotFound(id.to_string())),
+        if exists.is_none() {
+            return Err(AppError::EntityNotFound(id.to_string()));
         }
+
+        // Cascade delete references
+        self.delete_entity_references(id).await?;
+
+        // Delete the entity (AGE doesn't support RETURN count(*) after DELETE)
+        self.graph
+            .query("MATCH (e:Entity {id: $id}) DETACH DELETE e")
+            .param("id", id)
+            .run()
+            .await?;
+
+        Ok(())
     }
 
     /// Check if an entity has children (entities with BELONGS_TO pointing to it).
     pub async fn has_children(&self, id: &str) -> Result<bool, AppError> {
-        let row = self
+        // AGE: Use direct MATCH and check if any rows returned (count() fails on empty)
+        let rows = self
             .graph
             .query(
                 "MATCH (child:Entity)-[:BELONGS_TO]->(parent:Entity {id: $id})
-                 RETURN count(child) AS count",
+                 RETURN child.id AS child_id LIMIT 1",
             )
             .param("id", id)
-            .fetch_one()
+            .fetch_all()
             .await?;
 
-        match row {
-            Some(row) => {
-                let count: i64 = row.get("count")?;
-                Ok(count > 0)
-            }
-            None => Ok(false),
-        }
+        Ok(!rows.is_empty())
     }
 
     /// Delete all references attached to an entity.

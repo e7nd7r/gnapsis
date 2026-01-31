@@ -632,6 +632,7 @@ impl QueryRepository {
 
         Ok(CodeReference {
             id: node.get("id")?,
+            source_id: node.get_opt("source_id")?.unwrap_or_default(),
             path: node.get_opt("path")?.unwrap_or_default(),
             language: node.get_opt("language")?.unwrap_or_default(),
             commit_sha: node.get_opt("commit_sha")?.unwrap_or_default(),
@@ -652,6 +653,7 @@ impl QueryRepository {
 
         Ok(TextReference {
             id: node.get("id")?,
+            source_id: node.get_opt("source_id")?.unwrap_or_default(),
             path: node.get_opt("path")?.unwrap_or_default(),
             content_type: node
                 .get_opt("content_type")?

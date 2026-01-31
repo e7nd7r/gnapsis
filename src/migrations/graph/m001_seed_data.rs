@@ -1,30 +1,31 @@
 //! Seed data migration - scopes and default categories.
 
-use async_trait::async_trait;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 
 use crate::error::AppError;
 use crate::graph::Query;
-use crate::migrations::{Migration, MigrationContext};
+use crate::migrations::{GraphMigration, GraphMigrationContext, Migration};
 use crate::models::{generate_ulid, Scope};
 
-/// Seed data migration (scopes and categories).
-pub struct M002SeedData {
+pub struct M001SeedData {
     graph_name: String,
 }
 
-impl M002SeedData {
-    /// Create a new seed data migration for the given graph.
+impl M001SeedData {
     pub fn new(graph_name: &str) -> Self {
         Self {
             graph_name: graph_name.to_string(),
         }
     }
 
-    /// Create Scope nodes with the fixed hierarchy.
-    async fn create_scopes(&self, ctx: &(dyn MigrationContext + Sync)) -> Result<(), AppError> {
-        // Create each scope node
+    async fn create_scopes(
+        &self,
+        ctx: &(dyn GraphMigrationContext + Sync),
+    ) -> Result<(), AppError> {
         for scope in Scope::all() {
-            Query::new(ctx,
+            Query::new(
+                ctx,
                 "MERGE (s:Scope {name: $name})
                  SET s.depth = $depth, s.description = $description",
             )
@@ -35,8 +36,8 @@ impl M002SeedData {
             .await?;
         }
 
-        // Create hierarchy: Domain -> Feature -> Namespace -> Component -> Unit
-        Query::new(ctx,
+        Query::new(
+            ctx,
             "MATCH (domain:Scope {name: 'Domain'})
              MATCH (feature:Scope {name: 'Feature'})
              MATCH (namespace:Scope {name: 'Namespace'})
@@ -53,29 +54,23 @@ impl M002SeedData {
         Ok(())
     }
 
-    /// Create default categories for each scope.
     async fn create_default_categories(
         &self,
-        ctx: &(dyn MigrationContext + Sync),
+        ctx: &(dyn GraphMigrationContext + Sync),
     ) -> Result<(), AppError> {
         let categories = [
-            // Domain
             ("core", "Domain", "Core business logic"),
             ("infrastructure", "Domain", "Infrastructure and utilities"),
-            // Feature
             ("functional", "Feature", "Functional capabilities"),
             ("non-functional", "Feature", "Cross-cutting concerns"),
             ("technical", "Feature", "Technical implementation details"),
-            // Namespace
             ("module", "Namespace", "Code module"),
             ("library", "Namespace", "External library"),
-            // Component
             ("class", "Component", "Object-oriented class"),
             ("struct", "Component", "Data structure"),
             ("trait", "Component", "Trait/interface definition"),
             ("interface", "Component", "Interface definition"),
             ("enum", "Component", "Enumeration type"),
-            // Unit
             ("function", "Unit", "Standalone function"),
             ("method", "Unit", "Class/struct method"),
             ("property", "Unit", "Property accessor"),
@@ -83,11 +78,11 @@ impl M002SeedData {
             ("constant", "Unit", "Constant value"),
         ];
 
-        // Get current timestamp as ISO 8601 string for AGE compatibility
         let now = chrono::Utc::now().to_rfc3339();
 
         for (name, scope, description) in categories {
-            Query::new(ctx,
+            Query::new(
+                ctx,
                 "MATCH (s:Scope {name: $scope})
                  MERGE (c:Category {name: $name})-[:IN_SCOPE]->(s)
                  SET c.id = coalesce(c.id, $id),
@@ -106,27 +101,31 @@ impl M002SeedData {
     }
 }
 
-#[async_trait]
-impl Migration for M002SeedData {
+impl Migration for M001SeedData {
+    type Context = dyn GraphMigrationContext + Sync;
+
     fn id(&self) -> &'static str {
-        "m002_seed_data"
+        "graph001_seed_data"
     }
-
     fn version(&self) -> u32 {
-        2
+        1
     }
-
     fn description(&self) -> &'static str {
         "Seed data (scopes and default categories)"
     }
 
+    fn up<'a>(&'a self, ctx: &'a Self::Context) -> BoxFuture<'a, Result<(), AppError>> {
+        async move {
+            self.create_scopes(ctx).await?;
+            self.create_default_categories(ctx).await?;
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+impl GraphMigration for M001SeedData {
     fn graph_name(&self) -> &str {
         &self.graph_name
-    }
-
-    async fn up(&self, ctx: &(dyn MigrationContext + Sync)) -> Result<(), AppError> {
-        self.create_scopes(ctx).await?;
-        self.create_default_categories(ctx).await?;
-        Ok(())
     }
 }

@@ -13,6 +13,7 @@ use crate::models::{generate_ulid, CodeReference, Document, Reference, TextRefer
 /// Parameters for creating a code reference.
 pub struct CreateCodeReferenceParams<'a> {
     pub entity_id: &'a str,
+    pub source_id: &'a str,
     pub path: &'a str,
     pub language: &'a str,
     pub commit_sha: &'a str,
@@ -26,6 +27,7 @@ pub struct CreateCodeReferenceParams<'a> {
 /// Parameters for creating a text reference.
 pub struct CreateTextReferenceParams<'a> {
     pub entity_id: &'a str,
+    pub source_id: &'a str,
     pub path: &'a str,
     pub content_type: &'a str,
     pub commit_sha: &'a str,
@@ -68,24 +70,28 @@ impl DocumentRepository {
     // ============================================
 
     /// Create or update a document.
+    /// Uses AGE-compatible syntax (no ON CREATE SET).
     pub async fn upsert_document(
         &self,
         path: &str,
         content_hash: &str,
     ) -> Result<Document, AppError> {
-        let id = generate_ulid();
+        // Ensure document exists (AGE doesn't support MERGE ... ON CREATE SET)
+        self.ensure_document_exists(path).await?;
 
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Update and return the document
         let row = self
             .graph
             .query(
-                "MERGE (d:Document {path: $path})
-                 ON CREATE SET d.id = $id, d.created_at = toString(datetime())
-                 SET d.content_hash = $content_hash, d.updated_at = toString(datetime())
+                "MATCH (d:Document {path: $path})
+                 SET d.content_hash = $content_hash, d.updated_at = $now
                  RETURN d",
             )
-            .param("id", &id)
             .param("path", path)
             .param("content_hash", content_hash)
+            .param("now", &now)
             .fetch_one()
             .await?;
 
@@ -96,6 +102,40 @@ impl DocumentRepository {
                 query: "upsert_document".to_string(),
             }),
         }
+    }
+
+    /// Ensure a document node exists for the given path.
+    /// Creates it if it doesn't exist (AGE-compatible alternative to MERGE ... ON CREATE SET).
+    async fn ensure_document_exists(&self, path: &str) -> Result<(), AppError> {
+        // Check if document exists
+        let existing = self
+            .graph
+            .query("MATCH (d:Document {path: $path}) RETURN d.id")
+            .param("path", path)
+            .fetch_one()
+            .await?;
+
+        if existing.is_none() {
+            // Create new document
+            let id = generate_ulid();
+            let now = chrono::Utc::now().to_rfc3339();
+            self.graph
+                .query(
+                    "CREATE (d:Document {
+                         path: $path,
+                         id: $id,
+                         content_hash: '',
+                         created_at: $now
+                     })",
+                )
+                .param("id", &id)
+                .param("path", path)
+                .param("now", &now)
+                .run()
+                .await?;
+        }
+
+        Ok(())
     }
 
     /// Find a document by path.
@@ -118,11 +158,16 @@ impl DocumentRepository {
     // ============================================
 
     /// Create a code reference and link it to an entity.
+    /// Uses AGE-compatible syntax (no ON CREATE SET).
     pub async fn create_code_reference(
         &self,
         params: CreateCodeReferenceParams<'_>,
     ) -> Result<CodeReference, AppError> {
         let id = generate_ulid();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Ensure document exists first (AGE doesn't support MERGE ... ON CREATE SET)
+        self.ensure_document_exists(params.path).await?;
 
         let embedding_json = params
             .embedding
@@ -131,10 +176,10 @@ impl DocumentRepository {
         self.graph
             .query(
                 "MATCH (e:Entity {id: $entity_id})
-                 MERGE (d:Document {path: $path})
-                 ON CREATE SET d.id = $doc_id, d.content_hash = '', d.created_at = toString(datetime())
+                 MATCH (d:Document {path: $path})
                  CREATE (ref:CodeReference {
                      id: $id,
+                     source_id: $source_id,
                      path: $path,
                      language: $language,
                      commit_sha: $commit_sha,
@@ -143,27 +188,32 @@ impl DocumentRepository {
                      lsp_symbol: $lsp_symbol,
                      lsp_kind: $lsp_kind,
                      lsp_range: $lsp_range,
-                     created_at: toString(datetime())
+                     created_at: $now
                  })
                  CREATE (e)-[:HAS_REFERENCE]->(ref)
                  CREATE (ref)-[:IN_DOCUMENT]->(d)",
             )
             .param("id", &id)
-            .param("doc_id", generate_ulid())
             .param("entity_id", params.entity_id)
+            .param("source_id", params.source_id)
             .param("path", params.path)
             .param("language", params.language)
             .param("commit_sha", params.commit_sha)
             .param("description", params.description)
-            .param_raw("embedding", embedding_json.unwrap_or(serde_json::Value::Null))
+            .param_raw(
+                "embedding",
+                embedding_json.unwrap_or(serde_json::Value::Null),
+            )
             .param("lsp_symbol", params.lsp_symbol)
             .param("lsp_kind", params.lsp_kind as i64)
             .param("lsp_range", params.lsp_range)
+            .param("now", &now)
             .run()
             .await?;
 
         Ok(CodeReference {
             id,
+            source_id: params.source_id.to_string(),
             path: params.path.to_string(),
             language: params.language.to_string(),
             commit_sha: params.commit_sha.to_string(),
@@ -184,6 +234,7 @@ impl DocumentRepository {
         let embedding_json = params
             .embedding
             .map(|e| serde_json::to_value(e).unwrap_or_default());
+        let now = chrono::Utc::now().to_rfc3339();
 
         self.graph
             .query(
@@ -193,7 +244,7 @@ impl DocumentRepository {
                      ref.lsp_symbol = coalesce($lsp_symbol, ref.lsp_symbol),
                      ref.lsp_kind = coalesce($lsp_kind, ref.lsp_kind),
                      ref.lsp_range = coalesce($lsp_range, ref.lsp_range),
-                     ref.updated_at = toString(datetime())",
+                     ref.updated_at = $now",
             )
             .param("id", id)
             .param("commit_sha", params.commit_sha)
@@ -204,6 +255,7 @@ impl DocumentRepository {
             .param("lsp_symbol", params.lsp_symbol)
             .param("lsp_kind", params.lsp_kind.map(|k| k as i64))
             .param("lsp_range", params.lsp_range)
+            .param("now", &now)
             .run()
             .await?;
 
@@ -215,11 +267,16 @@ impl DocumentRepository {
     // ============================================
 
     /// Create a text reference and link it to an entity.
+    /// Uses AGE-compatible syntax (no ON CREATE SET).
     pub async fn create_text_reference(
         &self,
         params: CreateTextReferenceParams<'_>,
     ) -> Result<TextReference, AppError> {
         let id = generate_ulid();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Ensure document exists first (AGE doesn't support MERGE ... ON CREATE SET)
+        self.ensure_document_exists(params.path).await?;
 
         let embedding_json = params
             .embedding
@@ -228,10 +285,10 @@ impl DocumentRepository {
         self.graph
             .query(
                 "MATCH (e:Entity {id: $entity_id})
-                 MERGE (d:Document {path: $path})
-                 ON CREATE SET d.id = $doc_id, d.content_hash = '', d.created_at = toString(datetime())
+                 MATCH (d:Document {path: $path})
                  CREATE (ref:TextReference {
                      id: $id,
+                     source_id: $source_id,
                      path: $path,
                      content_type: $content_type,
                      commit_sha: $commit_sha,
@@ -240,27 +297,32 @@ impl DocumentRepository {
                      start_line: $start_line,
                      end_line: $end_line,
                      anchor: $anchor,
-                     created_at: toString(datetime())
+                     created_at: $now
                  })
                  CREATE (e)-[:HAS_REFERENCE]->(ref)
                  CREATE (ref)-[:IN_DOCUMENT]->(d)",
             )
             .param("id", &id)
-            .param("doc_id", generate_ulid())
             .param("entity_id", params.entity_id)
+            .param("source_id", params.source_id)
             .param("path", params.path)
             .param("content_type", params.content_type)
             .param("commit_sha", params.commit_sha)
             .param("description", params.description)
-            .param_raw("embedding", embedding_json.unwrap_or(serde_json::Value::Null))
+            .param_raw(
+                "embedding",
+                embedding_json.unwrap_or(serde_json::Value::Null),
+            )
             .param("start_line", params.start_line as i64)
             .param("end_line", params.end_line as i64)
             .param("anchor", params.anchor)
+            .param("now", &now)
             .run()
             .await?;
 
         Ok(TextReference {
             id,
+            source_id: params.source_id.to_string(),
             path: params.path.to_string(),
             content_type: params.content_type.to_string(),
             commit_sha: params.commit_sha.to_string(),
@@ -281,6 +343,7 @@ impl DocumentRepository {
         let embedding_json = params
             .embedding
             .map(|e| serde_json::to_value(e).unwrap_or_default());
+        let now = chrono::Utc::now().to_rfc3339();
 
         self.graph
             .query(
@@ -290,7 +353,7 @@ impl DocumentRepository {
                      ref.start_line = coalesce($start_line, ref.start_line),
                      ref.end_line = coalesce($end_line, ref.end_line),
                      ref.anchor = coalesce($anchor, ref.anchor),
-                     ref.updated_at = toString(datetime())",
+                     ref.updated_at = $now",
             )
             .param("id", id)
             .param("commit_sha", params.commit_sha)
@@ -301,6 +364,7 @@ impl DocumentRepository {
             .param("start_line", params.start_line.map(|l| l as i64))
             .param("end_line", params.end_line.map(|l| l as i64))
             .param("anchor", params.anchor)
+            .param("now", &now)
             .run()
             .await?;
 
@@ -606,6 +670,7 @@ impl DocumentRepository {
 
         Ok(CodeReference {
             id: node.get("id")?,
+            source_id: node.get_opt("source_id")?.unwrap_or_default(),
             path: node.get("path")?,
             language: node.get_opt("language")?.unwrap_or_default(),
             commit_sha: node.get_opt("commit_sha")?.unwrap_or_default(),
@@ -625,6 +690,7 @@ impl DocumentRepository {
 
         Ok(TextReference {
             id: node.get("id")?,
+            source_id: node.get_opt("source_id")?.unwrap_or_default(),
             path: node.get("path")?,
             content_type: node
                 .get_opt("content_type")?

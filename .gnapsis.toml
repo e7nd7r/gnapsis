@@ -1,5 +1,18 @@
 # Project-specific configuration
-# Credentials should be in ~/.config/gnapsis/config.toml
+# Database connection should be in ~/.config/gnapsis/config.toml
 
 [project]
 name = "gnapsis"
+# Graph name is always gnapsis_<name> (gnapsis_gnapsis)
+
+# Sources: directories containing project files.
+# Paths in references are relative to each source's path.
+# If no sources are configured, the current directory is used as "default".
+
+[[project.sources]]
+id = "default"
+path = "/Users/esteban/repos/gnapsis"
+
+[[project.sources]]
+id = "vault"
+path = "/Users/esteban/repos/e7nd7r-vault/projects/gnapsis"

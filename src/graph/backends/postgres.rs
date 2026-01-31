@@ -150,6 +150,36 @@ impl PostgresClient {
     pub fn graph_name(&self) -> &str {
         &self.graph_name
     }
+
+    /// Ensures the AGE graph exists, creating it if necessary.
+    ///
+    /// This should be called during initialization before running migrations
+    /// or any Cypher queries that expect the graph to exist.
+    pub async fn ensure_graph_exists(&self) -> Result<(), AppError> {
+        let conn = self.get_connection().await?;
+
+        // Check if graph exists and create if not
+        // AGE doesn't have IF NOT EXISTS for create_graph, so we check manually
+        let sql = format!(
+            r#"
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM ag_catalog.ag_graph WHERE name = '{}'
+                ) THEN
+                    PERFORM ag_catalog.create_graph('{}');
+                END IF;
+            END $$;
+            "#,
+            self.graph_name, self.graph_name
+        );
+
+        conn.batch_execute(&sql)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to ensure graph exists: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]

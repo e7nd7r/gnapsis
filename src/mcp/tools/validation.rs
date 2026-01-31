@@ -64,6 +64,9 @@ pub struct LspSymbol {
 pub struct LspRefreshParams {
     /// Path to the document being refreshed.
     pub document_path: String,
+    /// Source ID from project config. Defaults to "default" if not specified.
+    #[serde(default = "crate::config::default_source_id")]
+    pub source_id: String,
     /// LSP symbols from the language server.
     pub lsp_symbols: Vec<LspSymbol>,
 }
