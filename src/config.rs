@@ -322,7 +322,10 @@ mod tests {
     fn validate_duplicate_default_ids_fails() {
         let cfg = make_project(vec![make_source("default"), make_source("default")]);
         let err = cfg.validate().unwrap_err();
-        assert!(err.contains("Duplicate source id: \"default\""), "got: {err}");
+        assert!(
+            err.contains("Duplicate source id: \"default\""),
+            "got: {err}"
+        );
     }
 
     #[test]

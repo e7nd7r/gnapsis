@@ -10,7 +10,7 @@ name = "gnapsis"
 # If no sources are configured, the current directory is used as "default".
 
 [[project.sources]]
-id = "code"
+id = "default"
 path = "/Users/esteban/repos/gnapsis"
 
 [[project.sources]]
