@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gnapsis": {
+      "command": "gnapsis",
+      "args": ["mcp"],
+      "env": {}
+    }
+  }
+}

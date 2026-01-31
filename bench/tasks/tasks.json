@@ -1,0 +1,112 @@
+{
+  "tasks": [
+    {
+      "id": "T1-architecture-layers",
+      "category": "architecture",
+      "difficulty": "medium",
+      "prompt": "Describe the layered architecture of the gnapsis codebase. What are the main layers, what module does each layer correspond to, and what is the direction of dependencies between layers? Be specific about module names and file paths.",
+      "expected_answer_keywords": [
+        "mcp", "services", "repositories", "graph", "models",
+        "dependency injection", "FromRef", "FromContext", "Context",
+        "PostgresClient", "Apache AGE", "GraphClient"
+      ],
+      "rubric": "Must identify at least 4 layers (mcp -> services -> repositories -> graph/models). Must mention dependency injection via Context/FromRef or FromContext. Must note that graph provides backend abstraction over PostgreSQL + Apache AGE. Award partial credit for 3 layers. No credit for only listing directories without explaining dependency direction.",
+      "max_turns": 15
+    },
+    {
+      "id": "T2-dependency-trace",
+      "category": "dependency_tracing",
+      "difficulty": "hard",
+      "prompt": "Trace the complete data flow when the MCP tool 'search' is called with a query string. Starting from the MCP tool handler, trace through every layer until the embedding is generated and the database query is executed. List each function call in order with its file path.",
+      "expected_answer_keywords": [
+        "mcp/tools", "search",
+        "GraphService", "unified_search", "semantic_search",
+        "embedder", "embed",
+        "QueryRepository", "search_entities_by_embedding",
+        "cosine_similarity",
+        "fetch_all"
+      ],
+      "rubric": "Must trace: MCP tool handler -> GraphService::unified_search() -> semantic_search() -> embedder.embed() -> QueryRepository::search_entities_by_embedding() -> cosine_similarity(). Must mention the embedding vector generation step. Must reach the repository layer. Partial credit for getting 3+ of 5 hops correct.",
+      "max_turns": 20
+    },
+    {
+      "id": "T3-error-propagation",
+      "category": "error_analysis",
+      "difficulty": "medium",
+      "prompt": "How does error handling work in this codebase? What error type does src/error.rs define, what variants does it have, and how are errors converted for MCP protocol responses? Show specific mappings from error variants to MCP error codes.",
+      "expected_answer_keywords": [
+        "AppError", "thiserror",
+        "EntityNotFound", "CategoryNotFound", "ScopeNotFound",
+        "InvalidBelongsTo", "Validation",
+        "Connection", "Query",
+        "ErrorData", "ErrorCode",
+        "RESOURCE_NOT_FOUND", "INVALID_PARAMS"
+      ],
+      "rubric": "Must identify AppError enum and its use of thiserror derive macro. Must list at least 6 variants. Must explain the From<AppError> for ErrorData conversion with specific variant-to-error-code mappings (at least 3). Partial credit for identifying the pattern without specific mappings.",
+      "max_turns": 10
+    },
+    {
+      "id": "T4-impact-analysis",
+      "category": "impact_analysis",
+      "difficulty": "hard",
+      "prompt": "If I wanted to add a new graph backend (say SQLite instead of PostgreSQL), what traits would I need to implement, what files would need to change, and what would NOT need to change? Analyze the abstraction boundaries in the codebase.",
+      "expected_answer_keywords": [
+        "CypherExecutor", "GraphClient", "Transaction", "SqlExecutor",
+        "graph/traits.rs", "graph/backends",
+        "Graph", "generic",
+        "services would NOT change",
+        "repositories would NOT change",
+        "AppGraph", "context.rs"
+      ],
+      "rubric": "Must identify the trait hierarchy in graph/traits.rs (CypherExecutor, GraphClient, Transaction, optionally SqlExecutor). Must note that a new file/module under graph/backends/ is needed. Must explain that services, repositories, and MCP tools are abstracted and would not change. Must mention the AppGraph type alias and Graph<C: GraphClient> generic wrapper. Partial credit for traits only without change analysis.",
+      "max_turns": 15
+    },
+    {
+      "id": "T5-command-pattern",
+      "category": "pattern_recognition",
+      "difficulty": "medium",
+      "prompt": "The file src/services/commands.rs implements a specific design pattern. Identify the pattern, explain how it works in this codebase, list all command variants, and describe the failure handling semantics.",
+      "expected_answer_keywords": [
+        "Command Pattern",
+        "EntityCommand", "CommandService",
+        "Attach", "Unattach", "Add", "Relate", "Unrelate", "Link", "Unlink",
+        "CommandResult", "ExecutedCommand", "FailedCommand",
+        "sequential", "stop on failure", "skipped"
+      ],
+      "rubric": "Must identify the Command Pattern by name. Must list all 7 EntityCommand variants (Attach, Unattach, Add, Relate, Unrelate, Link, Unlink). Must explain sequential execution with stop-on-first-failure semantics. Must mention CommandResult with executed/failed/skipped fields. Partial credit for pattern identification without full variant listing.",
+      "max_turns": 10
+    },
+    {
+      "id": "T6-bfs-algorithm",
+      "category": "algorithm_understanding",
+      "difficulty": "hard",
+      "prompt": "Explain the Best-First Search algorithm implemented in src/services/graph.rs for semantic subgraph extraction. What data structures does it use, how does it score nodes, what are the two scoring strategies and how do they differ, and what are the budget constraints?",
+      "expected_answer_keywords": [
+        "BinaryHeap", "PQNode", "priority queue",
+        "cosine_similarity", "query_embedding", "embedding",
+        "Global", "BranchPenalty",
+        "max_tokens", "max_nodes", "min_relevance",
+        "TOKENS_PER_CHAR", "BRANCH_BUDGET",
+        "CacheEntry", "entity_cache"
+      ],
+      "rubric": "Must identify BinaryHeap as the priority queue with PQNode entries. Must explain scoring using cosine similarity between entity embeddings and query embedding. Must contrast Global vs BranchPenalty strategies (Global uses only global token factor; BranchPenalty adds per-branch token penalty). Must mention all 3 budget constraints (max_tokens, max_nodes, min_relevance). Must mention entity caching for avoiding re-fetches. Partial credit for identifying the algorithm without scoring formula details.",
+      "max_turns": 15
+    },
+    {
+      "id": "T7-find-duplication",
+      "category": "code_quality",
+      "difficulty": "hard",
+      "prompt": "Find duplicated code in the gnapsis codebase. Focus on the src/repositories/ directory. Identify functions or patterns that are implemented more than once across different files, and explain what they do.",
+      "expected_answer_keywords": [
+        "row_to_entity", "EntityRepository", "QueryRepository",
+        "row_to_code_reference", "DocumentRepository",
+        "row_to_text_reference",
+        "parse_scope", "CategoryRepository", "SchemaRepository",
+        "cosine_similarity",
+        "embedding", "f64", "f32"
+      ],
+      "rubric": "Must identify at least 3 of the following duplications: (1) row_to_entity in entity.rs vs query.rs, (2) row_to_code_reference in document.rs vs query.rs, (3) row_to_text_reference in document.rs vs query.rs, (4) parse_scope in category.rs vs schema.rs, (5) cosine_similarity in query.rs vs graph.rs, (6) embedding serialization/deserialization patterns. Full credit for 5+. Partial credit for 3-4.",
+      "max_turns": 20
+    }
+  ]
+}
