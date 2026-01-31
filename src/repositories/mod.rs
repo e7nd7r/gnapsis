@@ -1,6 +1,6 @@
-//! Data access layer for Neo4j graph operations.
+//! Data access layer for graph operations.
 //!
-//! Repositories provide a clean abstraction over Neo4j queries,
+//! Repositories provide a clean abstraction over graph queries,
 //! using the `FromContext` derive macro for dependency injection.
 
 mod category;

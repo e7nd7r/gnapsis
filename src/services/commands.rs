@@ -103,7 +103,7 @@ pub enum LinkType {
 }
 
 impl LinkType {
-    /// Get the relationship type string for Neo4j.
+    /// Get the relationship type string for graph queries.
     pub fn as_relationship(&self) -> &'static str {
         match self {
             LinkType::Calls => "CALLS",

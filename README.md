@@ -25,13 +25,12 @@ Think of it as a structured memory layer for AI coding assistants.
 **PostgreSQL with Apache AGE and pgvector**:
 
 ```bash
-# Using Docker (recommended)
-docker run -d \
-  --name gnapsis-db \
-  -p 5432:5432 \
-  -e POSTGRES_PASSWORD=postgres \
-  apache/age:latest
+# Using Docker Compose (recommended)
+# Builds a custom image with AGE 1.6.0 (PG17) + pgvector 0.8.0
+docker compose up -d
 ```
+
+This starts a PostgreSQL instance with Apache AGE and pgvector extensions pre-configured, including the initial graph creation.
 
 **Rust 1.75+** for building from source.
 
@@ -47,13 +46,17 @@ cargo install --path .
 
 ### 3. Configuration
 
-Gnapsis uses a layered configuration approach:
+Gnapsis uses a layered configuration approach (highest priority last):
 
-**Global config** (`~/.config/gnapsis/config.toml`) - database and embedding settings:
+1. **Global config** (`~/.config/gnapsis/config.toml`) - database and embedding settings
+2. **Project config** (`.gnapsis.toml` in your project root) - project name and sources
+3. **Environment variables** (`GNAPSIS_*`) - overrides for any setting
+
+**Global config** (`~/.config/gnapsis/config.toml`):
 
 ```toml
 [postgres]
-uri = "postgresql://postgres:password@localhost:5432/gnapsis"
+uri = "postgresql://postgres:postgres@localhost:5432/gnapsis_dev"
 
 [embedding]
 provider = "fastembed"
@@ -66,14 +69,29 @@ dimensions = 384
 ```toml
 [project]
 name = "my-project"
-# graph = "gnapsis_my_project"  # Optional, defaults to gnapsis_<name>
+# Graph name is always gnapsis_<name> (e.g., gnapsis_my_project)
 ```
 
-Or use environment variables: `GNAPSIS_POSTGRES_URI`, `GNAPSIS_PROJECT_NAME`.
+**Multi-source projects** - span multiple directories (e.g., code + docs):
+
+```toml
+[project]
+name = "my-project"
+
+[[project.sources]]
+id = "default"
+path = "/path/to/code-repo"
+
+[[project.sources]]
+id = "docs"
+path = "/path/to/documentation-vault"
+```
+
+See `.gnapsis.toml.example` for a complete reference.
 
 ### 4. MCP Setup
 
-Add to your Claude Code configuration (`~/.claude/claude_desktop_config.json`):
+Add to your project's `.mcp.json`:
 
 ```json
 {
@@ -208,6 +226,23 @@ Supported on: `query`, `search`, `analyze_document`, `project_overview`
 | `validate_graph` | Check graph integrity |
 | `lsp_refresh` | Refresh references using LSP data |
 | `get_changed_files` | Get files changed between commits |
+
+## Development
+
+Gnapsis uses [just](https://github.com/casey/just) for development tasks:
+
+```bash
+just db-up          # Start the database
+just build          # Build the project
+just test           # Run unit tests
+just test-integration  # Run integration tests (requires db-up)
+just lint           # Run clippy
+just fmt            # Format code
+just db-shell       # Connect to psql
+just cypher "MATCH (n) RETURN n"  # Run a Cypher query
+```
+
+Run `just` with no arguments to see all available commands.
 
 ## License
 
