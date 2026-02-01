@@ -26,7 +26,7 @@ pub type RowStream<'a> = Pin<Box<dyn Stream<Item = Result<Row, AppError>> + Send
 /// A graph node (vertex) from a Cypher query result.
 ///
 /// Represents a node with its internal ID, label, and properties.
-/// Compatible with both Neo4j and Apache AGE backends.
+/// Compatible with the Apache AGE graph backend.
 ///
 /// # Example
 ///

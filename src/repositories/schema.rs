@@ -102,42 +102,43 @@ impl SchemaRepository {
     }
 
     /// Get project statistics.
+    ///
+    /// Uses separate queries per node type to avoid Cartesian product explosion
+    /// from chained OPTIONAL MATCH clauses in Apache AGE.
     pub async fn get_project_stats(&self) -> Result<ProjectStats, AppError> {
-        let row = self
+        let sv_row = self
             .graph
-            .query(
-                "MATCH (sv:SchemaVersion)
-                 OPTIONAL MATCH (e:Entity)
-                 OPTIONAL MATCH (c:Category)
-                 OPTIONAL MATCH (d:Document)
-                 OPTIONAL MATCH (r:CodeReference)
-                 OPTIONAL MATCH (r2:TextReference)
-                 RETURN sv.version AS schema_version,
-                        count(DISTINCT e) AS entity_count,
-                        count(DISTINCT c) AS category_count,
-                        count(DISTINCT d) AS document_count,
-                        count(DISTINCT r) + count(DISTINCT r2) AS reference_count",
-            )
+            .query("MATCH (sv:SchemaVersion) RETURN sv.version AS schema_version LIMIT 1")
             .fetch_one()
             .await?;
 
-        match row {
-            Some(row) => {
-                let schema_version: i64 = row.get_opt("schema_version")?.unwrap_or(0);
-                let entity_count: i64 = row.get_opt("entity_count")?.unwrap_or(0);
-                let category_count: i64 = row.get_opt("category_count")?.unwrap_or(0);
-                let document_count: i64 = row.get_opt("document_count")?.unwrap_or(0);
-                let reference_count: i64 = row.get_opt("reference_count")?.unwrap_or(0);
+        let schema_version: u32 = match sv_row {
+            Some(row) => row.get_opt::<i64>("schema_version")?.unwrap_or(0) as u32,
+            None => return Err(AppError::NotInitialized),
+        };
 
-                Ok(ProjectStats {
-                    entity_count,
-                    category_count,
-                    document_count,
-                    reference_count,
-                    schema_version: schema_version as u32,
-                })
-            }
-            None => Err(AppError::NotInitialized),
+        let entity_count = self.count_nodes("Entity").await?;
+        let category_count = self.count_nodes("Category").await?;
+        let document_count = self.count_nodes("Document").await?;
+        let code_ref_count = self.count_nodes("CodeReference").await?;
+        let text_ref_count = self.count_nodes("TextReference").await?;
+
+        Ok(ProjectStats {
+            entity_count,
+            category_count,
+            document_count,
+            reference_count: code_ref_count + text_ref_count,
+            schema_version,
+        })
+    }
+
+    /// Count nodes of a given label.
+    async fn count_nodes(&self, label: &str) -> Result<i64, AppError> {
+        let query = format!("MATCH (n:{}) RETURN count(n) AS cnt", label);
+        let row = self.graph.query(&query).fetch_one().await?;
+        match row {
+            Some(row) => Ok(row.get_opt::<i64>("cnt")?.unwrap_or(0)),
+            None => Ok(0),
         }
     }
 

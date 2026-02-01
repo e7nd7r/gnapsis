@@ -14,7 +14,7 @@ use crate::di::FromRef;
 /// Gnapsis MCP Server for code intelligence graph management.
 ///
 /// This server provides AI assistants with tools to:
-/// - Initialize and manage the Neo4j graph schema
+/// - Initialize and manage the graph database schema
 /// - Create and query entities in the knowledge graph
 /// - Manage classifications and relationships
 /// - Sync with git changes

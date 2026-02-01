@@ -89,7 +89,7 @@ fn default_content_type() -> String {
     "markdown".to_string()
 }
 
-/// Deserialize embedding from f64 (Neo4j) to f32.
+/// Deserialize embedding from f64 to f32.
 fn deserialize_embedding<'de, D>(deserializer: D) -> Result<Option<Vec<f32>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -98,7 +98,7 @@ where
     Ok(opt.map(|v| v.into_iter().map(|f| f as f32).collect()))
 }
 
-/// Deserialize i64 (Neo4j) to i32.
+/// Deserialize i64 to i32.
 fn deserialize_i32<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
     D: Deserializer<'de>,
@@ -107,7 +107,7 @@ where
     Ok(value as i32)
 }
 
-/// Deserialize i64 (Neo4j) to u32.
+/// Deserialize i64 to u32.
 fn deserialize_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
     D: Deserializer<'de>,

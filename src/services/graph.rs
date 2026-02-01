@@ -462,7 +462,7 @@ impl GraphService {
             visited.insert(current.entity_id.clone());
             total_tokens += entity_tokens;
 
-            // Get 1-hop neighbors from Neo4j
+            // Get 1-hop neighbors from the graph
             let subgraph = self
                 .query_repo
                 .query_subgraph(&current.entity_id, 1, params.relationship_types.as_deref())

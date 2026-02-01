@@ -1,7 +1,7 @@
 //! Model Context Protocol (MCP) server implementation for Gnapsis.
 //!
 //! This module provides an MCP server that enables AI assistants to interact
-//! with the code intelligence graph stored in Neo4j.
+//! with the code intelligence graph stored in PostgreSQL + Apache AGE.
 //!
 //! ## Architecture
 //!

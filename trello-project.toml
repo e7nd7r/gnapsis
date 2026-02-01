@@ -1,7 +1,7 @@
 # Trello Project Configuration for Gnapsis Development
 
 name = "Gnapsis"
-description = "Code intelligence graph - MCP server for knowledge management with Neo4j"
+description = "Code intelligence graph - MCP server for knowledge management with PostgreSQL + Apache AGE"
 
 # Vector Database Configuration
 [vectordb]
@@ -19,4 +19,4 @@ show_download_progress = true
 [[boards]]
 id = "696bd8a0ef78258bfe612980"
 name = "Gnapsis"
-description = "Code intelligence graph - MCP server for knowledge management with Neo4j"
+description = "Code intelligence graph - MCP server for knowledge management with PostgreSQL + Apache AGE"
