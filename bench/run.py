@@ -24,12 +24,19 @@ CONDITIONS = {
     "with-gnapsis": CONFIG_DIR / "mcp-with-gnapsis.json",
 }
 
-# Append to system prompt to keep answers focused
-APPEND_PROMPT = (
-    "Answer the question directly and concisely. "
-    "Do not ask follow-up questions. "
-    "Do not offer to do additional work."
-)
+# Per-condition system prompt appendix
+APPEND_PROMPTS = {
+    "baseline": (
+        "Answer the question directly and concisely. "
+        "Do not ask follow-up questions. "
+        "Do not offer to do additional work."
+    ),
+    "with-gnapsis": (
+        "Answer the question directly and concisely. "
+        "Do not ask follow-up questions. "
+        "Do not offer to do additional work."
+    ),
+}
 
 
 def load_tasks(task_ids: list[str] | None = None) -> list[dict]:
@@ -63,7 +70,7 @@ def run_task(
         "--dangerously-skip-permissions",
         "--max-turns", str(turns),
         "--model", model,
-        "--append-system-prompt", APPEND_PROMPT,
+        "--append-system-prompt", APPEND_PROMPTS[condition],
     ]
 
     if dry_run:

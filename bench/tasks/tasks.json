@@ -8,9 +8,16 @@
       "expected_answer_keywords": [
         "mcp", "services", "repositories", "graph", "models",
         "dependency injection", "FromRef", "FromContext", "Context",
-        "PostgresClient", "Apache AGE", "GraphClient"
+        "PostgresClient", "Apache AGE", "GraphClient",
+        "Clean Architecture",
+        "Repository Pattern",
+        "separation of concerns",
+        "AppError",
+        "config",
+        "cross-cutting",
+        "compile-time"
       ],
-      "rubric": "Must identify at least 4 layers (mcp -> services -> repositories -> graph/models). Must mention dependency injection via Context/FromRef or FromContext. Must note that graph provides backend abstraction over PostgreSQL + Apache AGE. Award partial credit for 3 layers. No credit for only listing directories without explaining dependency direction.",
+      "rubric": "Tiered scoring:\n- 4-5: Identifies 3+ layers with correct dependency direction and specific module paths.\n- 6-7: Identifies 4+ layers, mentions dependency injection mechanism (Context/FromRef/FromContext), identifies PostgreSQL + Apache AGE as the backend.\n- 8: Names specific components per layer (individual repositories, services by name), identifies GraphClient as a key abstraction trait, recognizes the architectural style (Clean Architecture, Hexagonal, or Onion).\n- 9: Discusses cross-cutting concerns (error handling via AppError across layers, configuration management, models as a shared layer), explains compile-time DI via derive macros, identifies SOLID principles in practice (Dependency Inversion via traits, Single Responsibility per layer), mentions the Repository Pattern in the data access layer.\n- 10: Identifies 5+ layers with all key components named, notes observability patterns or their absence (logging, tracing), mentions standardization/coding conventions observed, identifies architectural trade-offs or potential improvements. Provides a comprehensive engineering analysis, not just a structural listing.",
       "max_turns": 15
     },
     {
@@ -24,9 +31,14 @@
         "embedder", "embed",
         "QueryRepository", "search_entities_by_embedding",
         "cosine_similarity",
-        "fetch_all"
+        "fetch_all",
+        "FromContext", "Context",
+        "async", "await",
+        "Result", "AppError",
+        "Vec", "embedding",
+        "Cypher"
       ],
-      "rubric": "Must trace: MCP tool handler -> GraphService::unified_search() -> semantic_search() -> embedder.embed() -> QueryRepository::search_entities_by_embedding() -> cosine_similarity(). Must mention the embedding vector generation step. Must reach the repository layer. Partial credit for getting 3+ of 5 hops correct.",
+      "rubric": "Tiered scoring:\n- 4-5: Gets 3+ hops correct in the call chain with file paths.\n- 6-7: Complete trace from MCP tool handler through GraphService to QueryRepository, mentions embedding vector generation step, reaches the database layer.\n- 8: Identifies data transformations at layer boundaries (query string -> embedding vector -> Cypher query -> parsed results), notes the DI mechanism that wires the layers together (FromContext/Context), identifies the Repository Pattern at the data access layer.\n- 9: Explains error propagation along the call chain (Result<T, AppError> threading, ? operator usage), identifies async/await patterns throughout the trace, notes how the embedding model is injected and abstracted.\n- 10: Discusses potential failure modes at each hop (network errors, embedding failures, query timeouts), notes absence or presence of observability (logging, tracing spans), identifies where input validation occurs, assesses the separation of concerns quality across the traced path.",
       "max_turns": 20
     },
     {
@@ -40,9 +52,14 @@
         "InvalidBelongsTo", "Validation",
         "Connection", "Query",
         "ErrorData", "ErrorCode",
-        "RESOURCE_NOT_FOUND", "INVALID_PARAMS"
+        "RESOURCE_NOT_FOUND", "INVALID_PARAMS",
+        "From", "Into",
+        "Result",
+        "boundary",
+        "user-facing",
+        "internal"
       ],
-      "rubric": "Must identify AppError enum and its use of thiserror derive macro. Must list at least 6 variants. Must explain the From<AppError> for ErrorData conversion with specific variant-to-error-code mappings (at least 3). Partial credit for identifying the pattern without specific mappings.",
+      "rubric": "Tiered scoring:\n- 4-5: Identifies AppError enum and its use of thiserror derive macro, lists some variants.\n- 6-7: Lists 6+ variants, explains the From<AppError> for ErrorData conversion, provides at least 3 specific variant-to-error-code mappings.\n- 8: Identifies the error boundary pattern — internal errors (Connection, Query) vs domain errors (EntityNotFound, Validation) vs user-facing MCP errors (ErrorData). Explains how the conversion layer sanitizes internal details from external responses.\n- 9: Evaluates the error handling strategy against best practices — notes whether errors carry enough context for debugging, whether error chains preserve root causes, whether there is structured error logging. Identifies the Result<T, AppError> convention used consistently across layers.\n- 10: Assesses completeness of error handling — identifies any unhandled edge cases or places where errors are silently swallowed. Notes presence or absence of error recovery strategies (retries, fallbacks). Discusses whether the error taxonomy supports observability (correlation IDs, error categorization for metrics). Compares the approach to standard patterns (RFC 7807, error envelopes).",
       "max_turns": 10
     },
     {
@@ -56,9 +73,14 @@
         "Graph", "generic",
         "services would NOT change",
         "repositories would NOT change",
-        "AppGraph", "context.rs"
+        "AppGraph", "context.rs",
+        "Dependency Inversion",
+        "Strategy Pattern",
+        "type alias",
+        "migration",
+        "config"
       ],
-      "rubric": "Must identify the trait hierarchy in graph/traits.rs (CypherExecutor, GraphClient, Transaction, optionally SqlExecutor). Must note that a new file/module under graph/backends/ is needed. Must explain that services, repositories, and MCP tools are abstracted and would not change. Must mention the AppGraph type alias and Graph<C: GraphClient> generic wrapper. Partial credit for traits only without change analysis.",
+      "rubric": "Tiered scoring:\n- 4-5: Identifies the key traits that need implementation (CypherExecutor, GraphClient, Transaction).\n- 6-7: Full trait list including SqlExecutor, identifies that a new file/module under graph/backends/ is needed, explains that services, repositories, and MCP tools would NOT change.\n- 8: Mentions the AppGraph type alias and Graph<C: GraphClient> generic wrapper, identifies this as the Dependency Inversion Principle in practice (upper layers depend on traits, not implementations), recognizes the Strategy Pattern enabling backend swapping.\n- 9: Discusses configuration changes needed (connection strings, backend selection in config), migration implications (schema compatibility, Cypher dialect differences), testing strategy for the new backend (trait-based testing, integration tests).\n- 10: Identifies potential issues with backend parity (feature gaps — e.g., SQLite lacking native graph extensions like AGE), discusses transaction semantics differences, notes where the abstraction might leak (backend-specific Cypher syntax, performance characteristics). Evaluates the overall quality of the abstraction boundary — what it enables and where it might break down.",
       "max_turns": 15
     },
     {
@@ -71,9 +93,12 @@
         "EntityCommand", "CommandService",
         "Attach", "Unattach", "Add", "Relate", "Unrelate", "Link", "Unlink",
         "CommandResult", "ExecutedCommand", "FailedCommand",
-        "sequential", "stop on failure", "skipped"
+        "sequential", "stop on failure", "skipped",
+        "encapsulation",
+        "enum",
+        "transaction"
       ],
-      "rubric": "Must identify the Command Pattern by name. Must list all 7 EntityCommand variants (Attach, Unattach, Add, Relate, Unrelate, Link, Unlink). Must explain sequential execution with stop-on-first-failure semantics. Must mention CommandResult with executed/failed/skipped fields. Partial credit for pattern identification without full variant listing.",
+      "rubric": "Tiered scoring:\n- 4-5: Identifies the Command Pattern by name, lists some variants.\n- 6-7: Lists all 7 EntityCommand variants (Attach, Unattach, Add, Relate, Unrelate, Link, Unlink), explains sequential execution with stop-on-first-failure semantics.\n- 8: Explains CommandResult structure with executed/failed/skipped fields, identifies how Rust enums are used to model the command variants (algebraic data types vs traditional OOP Command interface), notes that each variant carries its own data.\n- 9: Evaluates the pattern's fitness — discusses benefits (encapsulation of operations, batch execution, audit trail via results) and limitations. Identifies related patterns (Builder for command construction, possible Undo/Redo potential). Notes whether commands execute within a transaction boundary.\n- 10: Assesses engineering quality — error handling within individual commands, whether commands are idempotent, extensibility for new command types, observability of command execution (logging, metrics). Compares to alternative approaches (event sourcing, CQRS) and discusses trade-offs.",
       "max_turns": 10
     },
     {
@@ -87,9 +112,12 @@
         "Global", "BranchPenalty",
         "max_tokens", "max_nodes", "min_relevance",
         "TOKENS_PER_CHAR", "BRANCH_BUDGET",
-        "CacheEntry", "entity_cache"
+        "CacheEntry", "entity_cache",
+        "greedy",
+        "token budget",
+        "O(n log n)"
       ],
-      "rubric": "Must identify BinaryHeap as the priority queue with PQNode entries. Must explain scoring using cosine similarity between entity embeddings and query embedding. Must contrast Global vs BranchPenalty strategies (Global uses only global token factor; BranchPenalty adds per-branch token penalty). Must mention all 3 budget constraints (max_tokens, max_nodes, min_relevance). Must mention entity caching for avoiding re-fetches. Partial credit for identifying the algorithm without scoring formula details.",
+      "rubric": "Tiered scoring:\n- 4-5: Identifies BinaryHeap as the priority queue with PQNode entries, explains basic greedy traversal.\n- 6-7: Explains scoring using cosine similarity between entity embeddings and query embedding, names both strategies (Global, BranchPenalty), mentions the 3 budget constraints (max_tokens, max_nodes, min_relevance).\n- 8: Contrasts Global vs BranchPenalty in detail (Global uses only cumulative token consumption to decay scores; BranchPenalty additionally penalizes deep branches via per-branch token tracking to encourage breadth), explains the token estimation via TOKENS_PER_CHAR.\n- 9: Discusses entity caching (CacheEntry, avoiding redundant fetches), analyzes algorithm complexity (time and space), identifies the greedy nature and its implications (local optima, no backtracking). Notes how the algorithm handles graph cycles.\n- 10: Evaluates the algorithm design — discusses trade-offs of the two strategies for different query types, identifies potential improvements (beam search, A* with heuristics), assesses the token budget mechanism accuracy. Notes observability (logging of traversal decisions) and testability of the algorithm.",
       "max_turns": 15
     },
     {
@@ -103,9 +131,12 @@
         "row_to_text_reference",
         "parse_scope", "CategoryRepository", "SchemaRepository",
         "cosine_similarity",
-        "embedding", "f64", "f32"
+        "embedding", "f64", "f32",
+        "DRY",
+        "trait", "shared",
+        "refactor"
       ],
-      "rubric": "Must identify at least 3 of the following duplications: (1) row_to_entity in entity.rs vs query.rs, (2) row_to_code_reference in document.rs vs query.rs, (3) row_to_text_reference in document.rs vs query.rs, (4) parse_scope in category.rs vs schema.rs, (5) cosine_similarity in query.rs vs graph.rs, (6) embedding serialization/deserialization patterns. Full credit for 5+. Partial credit for 3-4.",
+      "rubric": "Tiered scoring:\n- 4-5: Identifies 2-3 duplications with file locations.\n- 6-7: Identifies 3-4 duplications with explanations of what each duplicated function does. Duplications include: (1) row_to_entity in entity.rs vs query.rs, (2) row_to_code_reference in document.rs vs query.rs, (3) row_to_text_reference in document.rs vs query.rs, (4) parse_scope in category.rs vs schema.rs, (5) cosine_similarity in query.rs vs graph.rs, (6) embedding serialization/deserialization patterns.\n- 8: Identifies 5+ duplications, explains the DRY violation and its maintenance risk, suggests concrete refactoring approach (shared trait, common module, helper functions).\n- 9: Analyzes the root cause of the duplication — identifies architectural reasons (repositories not sharing a common conversion layer, query.rs needing to duplicate entity/document parsing because it aggregates results across entity types). Discusses impact on maintainability and bug risk.\n- 10: Provides a refactoring plan with specific implementation details (e.g., extract a RowConversion trait, create a shared module). Evaluates the trade-offs of the refactoring (complexity vs DRY). Notes whether the duplications have already diverged (subtle differences between copies). Identifies whether tests cover the duplicated code paths and the risk of inconsistency.",
       "max_turns": 20
     }
   ]
