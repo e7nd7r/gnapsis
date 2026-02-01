@@ -55,11 +55,13 @@ pub fn camera_orbit_system(
         }
     }
 
-    // Zoom on scroll
+    // Zoom on scroll — adjust target, lerp actual distance for smoothness
     for ev in scroll.read() {
-        orbit.distance -= ev.y * 1.0;
-        orbit.distance = orbit.distance.clamp(2.0, 100.0);
+        orbit.target_distance -= ev.y * orbit.target_distance * 0.05;
+        orbit.target_distance = orbit.target_distance.clamp(2.0, 500.0);
     }
+    // Smooth interpolation toward target distance
+    orbit.distance += (orbit.target_distance - orbit.distance) * 0.15;
 
     // WASD for panning
     let pan_speed = 0.2;
@@ -90,6 +92,7 @@ pub fn camera_orbit_system(
         orbit.yaw = 0.0;
         orbit.pitch = 0.3;
         orbit.distance = 25.0;
+        orbit.target_distance = 25.0;
         orbit.target = Vec3::ZERO;
     }
 

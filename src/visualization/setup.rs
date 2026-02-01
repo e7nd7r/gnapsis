@@ -8,8 +8,8 @@ use crate::visualization::components::{
     EdgeHotspot, GraphEdge, GraphNode, InfoPanel, InfoPanelText, NodeLabel,
 };
 use crate::visualization::constants::{
-    edge_color_for_relationship, BASE_NODE_RADIUS, COLOR_DOCREF, COLOR_EDGE_DEFAULT, COLOR_ENTITY,
-    COLOR_START, MAX_NODE_RADIUS, MIN_NODE_RADIUS,
+    edge_color_for_relationship, BASE_NODE_RADIUS, COLOR_EDGE_DEFAULT, COLOR_ENTITY, COLOR_START,
+    MAX_NODE_RADIUS, MIN_NODE_RADIUS,
 };
 use crate::visualization::graph::NodeType;
 use crate::visualization::resources::{CameraOrbit, GraphLayoutRes, NodeMaterials};
@@ -94,22 +94,6 @@ pub fn setup_scene(
         emissive: LinearRgba::new(0.4, 0.6, 1.2, 1.0),
         ..default()
     });
-    let docref_normal = materials.add(StandardMaterial {
-        base_color: COLOR_DOCREF,
-        metallic: 0.3,
-        perceptual_roughness: 0.5,
-        reflectance: 0.3,
-        emissive: LinearRgba::BLACK,
-        ..default()
-    });
-    let docref_glow = materials.add(StandardMaterial {
-        base_color: COLOR_DOCREF,
-        metallic: 0.5,
-        perceptual_roughness: 0.3,
-        reflectance: 0.5,
-        emissive: LinearRgba::new(0.4, 1.0, 0.4, 1.0),
-        ..default()
-    });
     let start_normal = materials.add(StandardMaterial {
         base_color: COLOR_START,
         metallic: 0.5,
@@ -131,7 +115,6 @@ pub fn setup_scene(
     let relationship_types = [
         "BELONGS_TO",
         "CALLS",
-        "HAS_REFERENCE",
         "IMPORTS",
         "IMPLEMENTS",
         "INSTANTIATES",
@@ -187,8 +170,6 @@ pub fn setup_scene(
     commands.insert_resource(NodeMaterials {
         entity_normal: entity_normal.clone(),
         entity_glow,
-        docref_normal: docref_normal.clone(),
-        docref_glow,
         start_normal: start_normal.clone(),
         start_glow,
         edge_materials: edge_materials.clone(),
@@ -196,10 +177,10 @@ pub fn setup_scene(
 
     // Spawn nodes with labels
     let text_style = TextFont {
-        font_size: 11.0,
+        font_size: 9.0,
         ..default()
     };
-    let text_color = TextColor(Color::srgba(0.9, 0.9, 0.9, 0.85));
+    let text_color = TextColor(Color::srgba(0.85, 0.85, 0.85, 0.7));
 
     for (idx, node) in layout.0.nodes.iter().enumerate() {
         // Calculate radius based on mass: r = base * sqrt(mass)
@@ -215,10 +196,6 @@ pub fn setup_scene(
             NodeType::Entity => {
                 let mesh = meshes.add(Sphere::new(radius).mesh().ico(4).unwrap());
                 (mesh, entity_normal.clone())
-            }
-            NodeType::DocumentReference => {
-                let mesh = meshes.add(Cuboid::new(radius * 1.5, radius * 1.5, radius * 1.5));
-                (mesh, docref_normal.clone())
             }
         };
 
@@ -248,7 +225,7 @@ pub fn setup_scene(
     }
 
     // Spawn edges as thin cylinders with colors based on relationship type
-    let edge_mesh = meshes.add(Cylinder::new(0.015, 1.0)); // Slightly thicker for better visibility
+    let edge_mesh = meshes.add(Cylinder::new(0.035, 1.0));
 
     for edge in &layout.0.edges {
         let from_pos = layout.0.nodes[edge.from_idx].position;

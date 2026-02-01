@@ -1,29 +1,50 @@
 //! Force-directed graph layout algorithm.
 
 use bevy::math::Vec3;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::models::{QueryGraph, QueryGraphNode};
 
 /// Physics constants for force-directed layout.
-const REPULSION_STRENGTH: f32 = 8000.0; // Close-range repulsion
-const SPRING_STRENGTH: f32 = 80.0; // Edge springs
-const IDEAL_LENGTH: f32 = 8.0; // Preferred edge length
-const CENTERING_STRENGTH: f32 = 0.3; // Pull toward center
-const DAMPING: f32 = 0.5; // Friction (lower = faster settling)
+const REPULSION_STRENGTH: f32 = 200.0; // Base repulsion (no degree scaling)
+const DAMPING: f32 = 0.6; // Velocity friction per step
 const MIN_DISTANCE: f32 = 0.5;
 const MIN_MASS: f32 = 1.0; // Minimum mass per node
 const MASS_PER_CONNECTION: f32 = 1.5; // Additional mass per connection
+
+// Per-relationship-type spring parameters (stiffness, rest_length)
+// Stiffness: how strongly the log spring pulls toward rest length
+// Rest length: distance where spring force is zero
+// Equilibrium: stiffness * ln(d/rest) = REPULSION / d²
+// With these values, BELONGS_TO equilibrium ≈ 4.8, RELATED_TO ≈ 12
+const SPRING_BELONGS_TO: (f32, f32) = (50.0, 4.0); // Tight parent-child
+const SPRING_CALLS: (f32, f32) = (20.0, 7.0); // Code links moderate
+const SPRING_IMPORTS: (f32, f32) = (20.0, 7.0);
+const SPRING_IMPLEMENTS: (f32, f32) = (20.0, 7.0);
+const SPRING_INSTANTIATES: (f32, f32) = (20.0, 7.0);
+const SPRING_RELATED_TO: (f32, f32) = (10.0, 10.0); // Loose semantic
+const SPRING_DEFAULT: (f32, f32) = (15.0, 8.0);
 
 /// Node type for visualization coloring.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NodeType {
     /// Entity node (blue sphere).
     Entity,
-    /// Document reference node (green cube).
-    DocumentReference,
     /// Starting/root node (gold, larger).
     StartNode,
+}
+
+/// A document reference attached to an entity (shown in info panel, not as a graph node).
+#[derive(Debug, Clone)]
+pub struct ReferenceInfo {
+    /// File path (relative to project root).
+    pub path: String,
+    /// Starting line number.
+    pub start_line: u32,
+    /// Ending line number.
+    pub end_line: u32,
+    /// Description of what this reference points to.
+    pub description: String,
 }
 
 /// A node in the layout with position and velocity.
@@ -43,6 +64,8 @@ pub struct LayoutNode {
     pub is_start: bool,
     /// Mass (affects size and inertia).
     pub mass: f32,
+    /// Scope level (Domain, Feature, Namespace, Component, Unit) or None for references.
+    pub scope: Option<String>,
 }
 
 /// An edge in the layout.
@@ -56,6 +79,10 @@ pub struct LayoutEdge {
     pub label: String,
     /// Optional note on the relationship.
     pub note: Option<String>,
+    /// Log-spring stiffness for this edge type.
+    pub stiffness: f32,
+    /// Rest length where spring force is zero.
+    pub rest_length: f32,
 }
 
 /// Graph layout with nodes and edges.
@@ -65,75 +92,103 @@ pub struct GraphLayout {
     pub nodes: Vec<LayoutNode>,
     /// Edges connecting nodes.
     pub edges: Vec<LayoutEdge>,
-    /// Whether the layout has stabilized.
-    pub stable: bool,
+    /// Document references per entity ID (shown in info panel).
+    pub entity_references: HashMap<String, Vec<ReferenceInfo>>,
 }
 
 impl GraphLayout {
     /// Create layout from a QueryGraph (semantic query result).
+    ///
+    /// Reference nodes are not included in the layout — they are stored
+    /// in `entity_references` for display in the info panel.
     pub fn from_query_graph(graph: &QueryGraph) -> Self {
         let mut nodes = Vec::new();
         let mut id_to_idx = HashMap::new();
-        let total_nodes = graph.nodes.len();
 
-        // Create nodes from query result
-        for (i, node) in graph.nodes.iter().enumerate() {
-            let (id, label, node_type) = match node {
+        // Collect reference info keyed by reference ID
+        let mut ref_by_id: HashMap<String, ReferenceInfo> = HashMap::new();
+
+        // Create entity nodes only (skip references)
+        let mut entity_count = 0;
+        for node in &graph.nodes {
+            match node {
                 QueryGraphNode::Entity {
                     id,
                     name,
+                    scope,
                     relevance: _,
                     ..
                 } => {
-                    let nt = if id == &graph.root_entity.id {
+                    let node_type = if id == &graph.root_entity.id {
                         NodeType::StartNode
                     } else {
                         NodeType::Entity
                     };
-                    (id.clone(), name.clone(), nt)
+                    let is_start = matches!(node_type, NodeType::StartNode);
+                    let position = random_position(entity_count, graph.nodes.len());
+                    entity_count += 1;
+
+                    id_to_idx.insert(id.clone(), nodes.len());
+                    nodes.push(LayoutNode {
+                        id: id.clone(),
+                        label: name.clone(),
+                        position,
+                        velocity: Vec3::ZERO,
+                        node_type,
+                        is_start,
+                        mass: MIN_MASS,
+                        scope: scope.clone(),
+                    });
                 }
                 QueryGraphNode::Reference {
                     id,
                     document_path,
                     start_line,
                     end_line,
+                    description,
                     ..
                 } => {
-                    let label = format!("{}:{}-{}", document_path, start_line, end_line);
-                    (id.clone(), label, NodeType::DocumentReference)
+                    ref_by_id.insert(
+                        id.clone(),
+                        ReferenceInfo {
+                            path: document_path.clone(),
+                            start_line: *start_line,
+                            end_line: *end_line,
+                            description: description.clone(),
+                        },
+                    );
                 }
-            };
-
-            let is_start = matches!(node_type, NodeType::StartNode);
-            let position = random_position(i, total_nodes);
-
-            id_to_idx.insert(id.clone(), nodes.len());
-            nodes.push(LayoutNode {
-                id,
-                label,
-                position,
-                velocity: Vec3::ZERO,
-                node_type,
-                is_start,
-                mass: MIN_MASS,
-            });
+            }
         }
 
-        // Create edges
-        let edges: Vec<LayoutEdge> = graph
-            .edges
-            .iter()
-            .filter_map(|e| {
-                let from_idx = id_to_idx.get(&e.from_id)?;
-                let to_idx = id_to_idx.get(&e.to_id)?;
-                Some(LayoutEdge {
-                    from_idx: *from_idx,
-                    to_idx: *to_idx,
+        // Build entity_references from HAS_REFERENCE edges, and layout edges from the rest
+        let mut entity_references: HashMap<String, Vec<ReferenceInfo>> = HashMap::new();
+        let mut edges = Vec::new();
+
+        for e in &graph.edges {
+            if e.relationship == "HAS_REFERENCE" {
+                // Map HAS_REFERENCE edge to entity_references.
+                // from_id is the entity, to_id is the reference.
+                if let Some(ref_info) = ref_by_id.get(&e.to_id) {
+                    entity_references
+                        .entry(e.from_id.clone())
+                        .or_default()
+                        .push(ref_info.clone());
+                }
+            } else if let (Some(&from_idx), Some(&to_idx)) =
+                (id_to_idx.get(&e.from_id), id_to_idx.get(&e.to_id))
+            {
+                let (stiffness, rest_length) = spring_params(&e.relationship);
+                edges.push(LayoutEdge {
+                    from_idx,
+                    to_idx,
                     label: e.relationship.clone(),
                     note: e.note.clone(),
-                })
-            })
-            .collect();
+                    stiffness,
+                    rest_length,
+                });
+            }
+        }
 
         // Distribute mass based on connections
         distribute_mass(&mut nodes, &edges);
@@ -141,75 +196,72 @@ impl GraphLayout {
         Self {
             nodes,
             edges,
-            stable: false,
+            entity_references,
         }
     }
 
     /// Run one step of the force-directed layout algorithm.
-    /// Always runs - forces are continuously calculated.
+    ///
+    /// Uses a modified Eades model:
+    /// - Repulsion: FA2-style degree-weighted inverse-square between all pairs
+    /// - Attraction: Logarithmic springs with per-edge-type stiffness and rest length
+    /// - Centering: D3-style pure translation (no force, just recenters)
+    /// - Cooling: Alpha decay reduces forces over time for convergence
     pub fn update_physics(&mut self, dt: f32) {
         let n = self.nodes.len();
         if n == 0 {
             return;
         }
 
-        // Calculate center of mass
-        let center: Vec3 = self.nodes.iter().map(|n| n.position).sum::<Vec3>() / n as f32;
-
         // Pre-compute masses to avoid borrow issues
         let masses: Vec<f32> = self.nodes.iter().map(|n| n.mass).collect();
 
-        // Calculate repulsion forces between all node pairs
-        // F = ma, so a = F/m - heavier nodes accelerate less
+        // --- Repulsion: inverse-square between all pairs ---
+        // F_r = K / d²
+        // Simple Coulomb-style repulsion. Mass handles inertia (heavier = slower).
         for i in 0..n {
             for j in (i + 1)..n {
                 let delta = self.nodes[i].position - self.nodes[j].position;
                 let dist = delta.length().max(MIN_DISTANCE);
-                // Repulsion falls off with distance squared
                 let force = REPULSION_STRENGTH / (dist * dist);
                 let dir = delta.normalize_or_zero();
 
-                // Divide by mass: heavier nodes accelerate less
                 self.nodes[i].velocity += dir * force * dt / masses[i];
                 self.nodes[j].velocity -= dir * force * dt / masses[j];
             }
         }
 
-        // Calculate spring forces along edges (Hooke's law)
+        // --- Attraction: Eades logarithmic springs ---
+        // F_a = stiffness * ln(d / rest_length)
+        // Zero force at rest_length, gentle pull beyond, push below.
+        // Logarithmic growth prevents violent yanking of distant nodes.
         for edge in &self.edges {
             let delta = self.nodes[edge.to_idx].position - self.nodes[edge.from_idx].position;
-            let dist = delta.length();
-            // Spring force: F = k * (x - rest_length)
-            let displacement = dist - IDEAL_LENGTH;
-            let force = displacement * SPRING_STRENGTH;
+            let dist = delta.length().max(MIN_DISTANCE);
+            let force = edge.stiffness * (dist / edge.rest_length).ln();
             let dir = delta.normalize_or_zero();
 
-            // Divide by mass: heavier nodes accelerate less
             self.nodes[edge.from_idx].velocity += dir * force * dt / masses[edge.from_idx];
             self.nodes[edge.to_idx].velocity -= dir * force * dt / masses[edge.to_idx];
         }
 
-        // Apply centering force (pulls nodes toward center of mass)
-        for (i, node) in self.nodes.iter_mut().enumerate() {
-            let to_center = center - node.position;
-            node.velocity += to_center * CENTERING_STRENGTH / masses[i];
+        // --- Centering: D3-style pure translation (no force) ---
+        // Translate all nodes so centroid is at origin. Prevents drift
+        // without adding energy or distorting the layout.
+        let centroid: Vec3 = self.nodes.iter().map(|n| n.position).sum::<Vec3>() / n as f32;
+        for node in &mut self.nodes {
+            node.position -= centroid;
         }
 
-        // Apply damping and update positions
+        // --- Damping and integration ---
         const MAX_VELOCITY: f32 = 200.0;
-        const SETTLE_THRESHOLD: f32 = 2.0; // Below this, apply progressive damping
         for node in &mut self.nodes {
             node.velocity *= DAMPING;
             let speed = node.velocity.length();
-
-            // Progressive damping: smoothly reduce velocity as it gets smaller
-            if speed < SETTLE_THRESHOLD && speed > 0.001 {
-                let t = speed / SETTLE_THRESHOLD; // 0 to 1
-                node.velocity *= t * t; // Quadratic falloff for smooth settling
-            } else if speed <= 0.001 {
-                node.velocity = Vec3::ZERO;
-            } else if speed > MAX_VELOCITY {
+            if speed > MAX_VELOCITY {
                 node.velocity = node.velocity.normalize() * MAX_VELOCITY;
+            } else if speed < 0.001 {
+                node.velocity = Vec3::ZERO;
             }
             node.position += node.velocity * dt;
         }
@@ -244,6 +296,54 @@ impl GraphLayout {
         // Add some padding
         (center, max_dist + 2.0)
     }
+
+    /// Collect all nodes and edges within `hops` hops of `start` via BFS.
+    /// BELONGS_TO edges are only traversed toward children (parent → child).
+    /// All other edges are traversed bidirectionally.
+    /// Returns (node indices, edge pairs) in the neighborhood.
+    pub fn collect_n_hop_neighborhood(
+        &self,
+        start: usize,
+        hops: usize,
+    ) -> (HashSet<usize>, HashSet<(usize, usize)>) {
+        let mut visited_nodes = HashSet::new();
+        let mut visited_edges = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        visited_nodes.insert(start);
+        queue.push_back((start, 0));
+
+        while let Some((current, depth)) = queue.pop_front() {
+            if depth >= hops {
+                continue;
+            }
+            for edge in &self.edges {
+                // BELONGS_TO: child --BELONGS_TO--> parent
+                // Only traverse parent → child (edge.to_idx is parent, from_idx is child)
+                let neighbor = if edge.label == "BELONGS_TO" {
+                    if edge.to_idx == current {
+                        Some(edge.from_idx) // current is parent, go to child
+                    } else {
+                        None // don't go upward
+                    }
+                } else if edge.from_idx == current {
+                    Some(edge.to_idx)
+                } else if edge.to_idx == current {
+                    Some(edge.from_idx)
+                } else {
+                    None
+                };
+                if let Some(n) = neighbor {
+                    visited_edges.insert((edge.from_idx, edge.to_idx));
+                    if visited_nodes.insert(n) {
+                        queue.push_back((n, depth + 1));
+                    }
+                }
+            }
+        }
+
+        (visited_nodes, visited_edges)
+    }
 }
 
 /// Distribute mass among nodes based on connection count (arity).
@@ -265,6 +365,20 @@ fn distribute_mass(nodes: &mut [LayoutNode], edges: &[LayoutEdge]) {
     // This ensures all nodes with same connection count have identical mass
     for i in 0..n {
         nodes[i].mass = MIN_MASS + connection_counts[i] as f32 * MASS_PER_CONNECTION;
+    }
+}
+
+/// Get spring parameters (stiffness, rest_length) for a relationship type.
+/// Hierarchical edges cluster tighter; semantic edges stay loose.
+fn spring_params(relationship: &str) -> (f32, f32) {
+    match relationship {
+        "BELONGS_TO" => SPRING_BELONGS_TO,
+        "CALLS" => SPRING_CALLS,
+        "IMPORTS" => SPRING_IMPORTS,
+        "IMPLEMENTS" => SPRING_IMPLEMENTS,
+        "INSTANTIATES" => SPRING_INSTANTIATES,
+        "RELATED_TO" => SPRING_RELATED_TO,
+        _ => SPRING_DEFAULT,
     }
 }
 

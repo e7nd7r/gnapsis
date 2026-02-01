@@ -65,7 +65,7 @@ pub fn drag_node_system(
                     drag_state.total_movement = 0.0;
                     drag_state.grab_offset = grab_offset;
                     // Reset stability so physics responds to drag
-                    layout.0.stable = false;
+                    // Perturbed by drag — physics will respond naturally
                 }
             }
         }
@@ -114,7 +114,7 @@ pub fn drag_node_system(
                     }
 
                     // Keep physics running while dragging
-                    layout.0.stable = false;
+                    // Perturbed by drag — physics will respond naturally
                 }
             }
         }

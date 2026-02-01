@@ -23,7 +23,7 @@ mod resources;
 mod setup;
 mod systems;
 
-pub use graph::{GraphLayout, LayoutNode, NodeType};
+pub use graph::{GraphLayout, LayoutNode, NodeType, ReferenceInfo};
 pub use nvim::NvimClient;
 pub use plugin::VisualizationPlugin;
 
@@ -64,6 +64,6 @@ pub fn run_visualizer(graph: QueryGraph) {
             distance: camera_distance,
             ..default()
         })
-        .add_plugins(VisualizationPlugin::new(layout, graph, nvim_client))
+        .add_plugins(VisualizationPlugin::new(layout, nvim_client))
         .run();
 }
