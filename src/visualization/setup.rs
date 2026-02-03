@@ -5,11 +5,11 @@ use bevy::ui::PositionType;
 use std::collections::{HashMap, HashSet};
 
 use crate::visualization::components::{
-    EdgeHotspot, GraphEdge, GraphNode, InfoPanel, InfoPanelText, NodeLabel,
+    EdgeArrow, EdgeHotspot, GraphEdge, GraphNode, InfoPanel, InfoPanelText, NodeLabel,
 };
 use crate::visualization::constants::{
-    edge_color_for_relationship, BASE_NODE_RADIUS, COLOR_DOCREF, COLOR_EDGE_DEFAULT, COLOR_ENTITY,
-    COLOR_START, MAX_NODE_RADIUS, MIN_NODE_RADIUS,
+    edge_color_for_relationship, node_color_for_scope, BASE_NODE_RADIUS, COLOR_EDGE_DEFAULT,
+    COLOR_NODE_DEFAULT, COLOR_START, MAX_NODE_RADIUS, MIN_NODE_RADIUS, SCOPE_NAMES,
 };
 use crate::visualization::graph::NodeType;
 use crate::visualization::resources::{CameraOrbit, GraphLayoutRes, NodeMaterials};
@@ -77,45 +77,45 @@ pub fn setup_scene(
         brightness: 300.0,
     });
 
-    // Create materials - normal has NO emissive, glow has strong emissive
-    let entity_normal = materials.add(StandardMaterial {
-        base_color: COLOR_ENTITY,
-        metallic: 0.3,
-        perceptual_roughness: 0.5,
-        reflectance: 0.3,
-        emissive: LinearRgba::BLACK,
-        ..default()
-    });
-    let entity_glow = materials.add(StandardMaterial {
-        base_color: COLOR_ENTITY,
-        metallic: 0.5,
-        perceptual_roughness: 0.3,
-        reflectance: 0.5,
-        emissive: LinearRgba::new(0.4, 0.6, 1.2, 1.0),
-        ..default()
-    });
-    let docref_normal = materials.add(StandardMaterial {
-        base_color: COLOR_DOCREF,
-        metallic: 0.3,
-        perceptual_roughness: 0.5,
-        reflectance: 0.3,
-        emissive: LinearRgba::BLACK,
-        ..default()
-    });
-    let docref_glow = materials.add(StandardMaterial {
-        base_color: COLOR_DOCREF,
-        metallic: 0.5,
-        perceptual_roughness: 0.3,
-        reflectance: 0.5,
-        emissive: LinearRgba::new(0.4, 1.0, 0.4, 1.0),
-        ..default()
-    });
+    // Create scope-based node materials
+    let mut scope_materials: HashMap<String, (Handle<StandardMaterial>, Handle<StandardMaterial>)> =
+        HashMap::new();
+
+    // Build materials for each scope + a default for nodes without scope
+    let scope_entries: Vec<(&str, Color)> = SCOPE_NAMES
+        .iter()
+        .map(|&s| (s, node_color_for_scope(Some(s))))
+        .chain(std::iter::once(("_DEFAULT", COLOR_NODE_DEFAULT)))
+        .collect();
+
+    for (scope_name, color) in &scope_entries {
+        let [r, g, b] = color.to_srgba().to_f32_array_no_alpha();
+
+        let normal = materials.add(StandardMaterial {
+            base_color: *color,
+            metallic: 0.3,
+            perceptual_roughness: 0.5,
+            reflectance: 0.3,
+            emissive: LinearRgba::BLACK,
+            ..default()
+        });
+        let glow = materials.add(StandardMaterial {
+            base_color: *color,
+            metallic: 0.5,
+            perceptual_roughness: 0.3,
+            reflectance: 0.5,
+            emissive: LinearRgba::new(r * 1.5, g * 1.5, b * 1.5, 1.0),
+            ..default()
+        });
+        scope_materials.insert(scope_name.to_string(), (normal, glow));
+    }
+
     let start_normal = materials.add(StandardMaterial {
         base_color: COLOR_START,
         metallic: 0.5,
         perceptual_roughness: 0.4,
         reflectance: 0.5,
-        emissive: LinearRgba::new(0.2, 0.15, 0.0, 1.0), // Slight glow to stand out
+        emissive: LinearRgba::new(0.15, 0.15, 0.2, 1.0), // Slight glow to stand out
         ..default()
     });
     let start_glow = materials.add(StandardMaterial {
@@ -123,7 +123,7 @@ pub fn setup_scene(
         metallic: 0.6,
         perceptual_roughness: 0.2,
         reflectance: 0.6,
-        emissive: LinearRgba::new(1.2, 1.0, 0.2, 1.0),
+        emissive: LinearRgba::new(1.2, 1.2, 1.4, 1.0),
         ..default()
     });
 
@@ -131,7 +131,6 @@ pub fn setup_scene(
     let relationship_types = [
         "BELONGS_TO",
         "CALLS",
-        "HAS_REFERENCE",
         "IMPORTS",
         "IMPLEMENTS",
         "INSTANTIATES",
@@ -185,10 +184,7 @@ pub fn setup_scene(
 
     // Store materials as resource for glow updates
     commands.insert_resource(NodeMaterials {
-        entity_normal: entity_normal.clone(),
-        entity_glow,
-        docref_normal: docref_normal.clone(),
-        docref_glow,
+        scope_materials: scope_materials.clone(),
         start_normal: start_normal.clone(),
         start_glow,
         edge_materials: edge_materials.clone(),
@@ -196,10 +192,10 @@ pub fn setup_scene(
 
     // Spawn nodes with labels
     let text_style = TextFont {
-        font_size: 11.0,
+        font_size: 9.0,
         ..default()
     };
-    let text_color = TextColor(Color::srgba(0.9, 0.9, 0.9, 0.85));
+    let text_color = TextColor(Color::srgba(0.85, 0.85, 0.85, 0.7));
 
     for (idx, node) in layout.0.nodes.iter().enumerate() {
         // Calculate radius based on mass: r = base * sqrt(mass)
@@ -214,11 +210,13 @@ pub fn setup_scene(
             }
             NodeType::Entity => {
                 let mesh = meshes.add(Sphere::new(radius).mesh().ico(4).unwrap());
-                (mesh, entity_normal.clone())
-            }
-            NodeType::DocumentReference => {
-                let mesh = meshes.add(Cuboid::new(radius * 1.5, radius * 1.5, radius * 1.5));
-                (mesh, docref_normal.clone())
+                let scope_key = node.scope.as_deref().unwrap_or("_DEFAULT");
+                let mat = scope_materials
+                    .get(scope_key)
+                    .or_else(|| scope_materials.get("_DEFAULT"))
+                    .map(|(normal, _)| normal.clone())
+                    .unwrap();
+                (mesh, mat)
             }
         };
 
@@ -247,8 +245,9 @@ pub fn setup_scene(
         ));
     }
 
-    // Spawn edges as thin cylinders with colors based on relationship type
-    let edge_mesh = meshes.add(Cylinder::new(0.015, 1.0)); // Slightly thicker for better visibility
+    // Spawn edges as thin cylinders with arrowheads showing direction
+    let edge_mesh = meshes.add(Cylinder::new(0.05, 1.0));
+    let arrow_mesh = meshes.add(Cone::new(0.12, 0.3));
 
     for edge in &layout.0.edges {
         let from_pos = layout.0.nodes[edge.from_idx].position;
@@ -259,7 +258,8 @@ pub fn setup_scene(
         let length = direction.length();
 
         if length > 0.01 {
-            let rotation = Quat::from_rotation_arc(Vec3::Y, direction.normalize());
+            let dir_norm = direction.normalize();
+            let rotation = Quat::from_rotation_arc(Vec3::Y, dir_norm);
 
             // Get material for this relationship type
             let material = edge_materials
@@ -270,7 +270,7 @@ pub fn setup_scene(
 
             commands.spawn((
                 Mesh3d(edge_mesh.clone()),
-                MeshMaterial3d(material),
+                MeshMaterial3d(material.clone()),
                 Transform::from_translation(midpoint)
                     .with_rotation(rotation)
                     .with_scale(Vec3::new(1.0, length, 1.0)),
@@ -278,6 +278,22 @@ pub fn setup_scene(
                     from_idx: edge.from_idx,
                     to_idx: edge.to_idx,
                     relationship: edge.label.clone(),
+                },
+            ));
+
+            // Arrowhead cone at target end, offset by target node radius
+            let target_node = &layout.0.nodes[edge.to_idx];
+            let target_radius = (BASE_NODE_RADIUS * target_node.mass.sqrt())
+                .clamp(MIN_NODE_RADIUS, MAX_NODE_RADIUS);
+            let arrow_pos = to_pos - dir_norm * (target_radius + 0.2);
+
+            commands.spawn((
+                Mesh3d(arrow_mesh.clone()),
+                MeshMaterial3d(material),
+                Transform::from_translation(arrow_pos).with_rotation(rotation),
+                EdgeArrow {
+                    from_idx: edge.from_idx,
+                    to_idx: edge.to_idx,
                 },
             ));
 
@@ -299,7 +315,75 @@ pub fn setup_scene(
         }
     }
 
-    // Collect unique relationship types for legend
+    // Collect unique scopes present in the graph for node legend
+    let mut node_scopes: Vec<&str> = layout
+        .0
+        .nodes
+        .iter()
+        .filter_map(|n| n.scope.as_deref())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    node_scopes.sort();
+
+    // Spawn node scope legend
+    commands
+        .spawn((
+            bevy::ui::Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(50.0),
+                left: Val::Px(10.0),
+                padding: UiRect::all(Val::Px(10.0)),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(20.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.1, 0.1, 0.15, 0.85)),
+            BorderRadius::all(Val::Px(6.0)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("Nodes:"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.6, 0.6, 0.6)),
+            ));
+            for scope in node_scopes {
+                let color = node_color_for_scope(Some(scope));
+                parent
+                    .spawn(bevy::ui::Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    })
+                    .with_children(|item| {
+                        item.spawn((
+                            bevy::ui::Node {
+                                width: Val::Px(12.0),
+                                height: Val::Px(12.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(color),
+                            BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ));
+                        item.spawn((
+                            Text::new(scope),
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                        ));
+                    });
+            }
+        });
+
+    // Collect unique relationship types for edge legend
     let mut legend_types: Vec<&str> = layout
         .0
         .edges
@@ -310,7 +394,7 @@ pub fn setup_scene(
         .collect();
     legend_types.sort();
 
-    // Spawn legend panel at the bottom
+    // Spawn edge legend panel at the bottom
     commands
         .spawn((
             bevy::ui::Node {
@@ -326,6 +410,14 @@ pub fn setup_scene(
             BorderRadius::all(Val::Px(6.0)),
         ))
         .with_children(|parent| {
+            parent.spawn((
+                Text::new("Edges:"),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.6, 0.6, 0.6)),
+            ));
             for rel_type in legend_types {
                 let color = edge_color_for_relationship(rel_type);
                 // Legend item: colored box + label

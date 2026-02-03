@@ -196,6 +196,13 @@ impl EntityService {
         // Validate Link/Unlink commands against scope
         self.validate_link_commands(&input.commands, &scope)?;
 
+        // Validate scope hierarchy with parents (before entity creation to prevent orphans)
+        for parent_id in &input.parent_ids {
+            self.entity_repo
+                .validate_scope_for_parent(&scope, parent_id)
+                .await?;
+        }
+
         // Generate embedding for description
         let embedding = self
             .embedder
@@ -281,6 +288,37 @@ impl EntityService {
         // Get current scope for Link/Unlink validation
         let scope = self.get_entity_scope(&input.entity_id).await?;
         self.validate_link_commands(&input.commands, &scope)?;
+
+        // Validate scope hierarchy if parents or categories are changing
+        if input.parent_ids.is_some() || input.category_ids.is_some() {
+            // Effective scope: new categories if provided, otherwise existing
+            let effective_scope = if let Some(ref cat_ids) = input.category_ids {
+                if !cat_ids.is_empty() {
+                    self.determine_scope(cat_ids).await?
+                } else {
+                    scope.clone()
+                }
+            } else {
+                scope.clone()
+            };
+
+            // Effective parents: new if provided, otherwise existing
+            let effective_parents = if let Some(ref parent_ids) = input.parent_ids {
+                parent_ids.clone()
+            } else {
+                let context = self
+                    .query_repo
+                    .get_entity_with_context(&input.entity_id)
+                    .await?;
+                context.parents.iter().map(|p| p.id.clone()).collect()
+            };
+
+            for parent_id in &effective_parents {
+                self.entity_repo
+                    .validate_scope_for_parent(&effective_scope, parent_id)
+                    .await?;
+            }
+        }
 
         // Update name/description if provided
         let new_embedding = if let Some(ref desc) = input.description {

@@ -69,7 +69,9 @@ impl ValidationService {
     /// Find scope violations where child scope is not deeper than parent.
     ///
     /// The hierarchy flows: Domain(1) → Feature(2) → Namespace(3) → Component(4) → Unit(5)
-    /// A child's scope depth must be greater than its parent's scope depth.
+    /// A child's scope depth must be greater than its parent's scope depth,
+    /// except Namespace and Component which allow same-scope nesting
+    /// (e.g. namespace `graph::backends` containing namespace `graph::backends::postgres`).
     pub async fn find_scope_violations(&self) -> Result<Vec<ValidationIssue>, AppError> {
         // AGE requires named variables for all nodes in path patterns
         let rows = self
@@ -78,7 +80,10 @@ impl ValidationService {
                 "MATCH (child:Entity)-[:BELONGS_TO]->(parent:Entity)
                  MATCH (child)-[:CLASSIFIED_AS]->(childCat:Category)-[:IN_SCOPE]->(childScope:Scope)
                  MATCH (parent)-[:CLASSIFIED_AS]->(parentCat:Category)-[:IN_SCOPE]->(parentScope:Scope)
-                 WHERE childScope.depth <= parentScope.depth
+                 WHERE childScope.depth < parentScope.depth
+                    OR (childScope.depth = parentScope.depth
+                        AND childScope.name <> 'Namespace'
+                        AND childScope.name <> 'Component')
                  RETURN child.id AS child_id, child.name AS child_name,
                         parent.id AS parent_id, parent.name AS parent_name,
                         childScope.name AS child_scope, parentScope.name AS parent_scope",

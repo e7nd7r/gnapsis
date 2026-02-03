@@ -23,6 +23,8 @@ pub struct CameraOrbit {
     pub pitch: f32,
     /// Distance from target.
     pub distance: f32,
+    /// Target distance for smooth zoom interpolation.
+    pub target_distance: f32,
     /// Point the camera orbits around.
     pub target: Vec3,
 }
@@ -33,6 +35,7 @@ impl Default for CameraOrbit {
             yaw: 0.0,
             pitch: 0.3,
             distance: 25.0,
+            target_distance: 25.0,
             target: Vec3::ZERO,
         }
     }
@@ -104,14 +107,8 @@ pub struct NvimClientRes(pub Mutex<Option<NvimClient>>);
 /// every frame and enables swapping between normal/glow states.
 #[derive(Resource)]
 pub struct NodeMaterials {
-    /// Normal material for entity nodes.
-    pub entity_normal: Handle<StandardMaterial>,
-    /// Glow material for selected entity nodes.
-    pub entity_glow: Handle<StandardMaterial>,
-    /// Normal material for document reference nodes.
-    pub docref_normal: Handle<StandardMaterial>,
-    /// Glow material for selected document reference nodes.
-    pub docref_glow: Handle<StandardMaterial>,
+    /// Scope-based node materials: key is scope name (or "_DEFAULT"), value is (normal, glow).
+    pub scope_materials: HashMap<String, (Handle<StandardMaterial>, Handle<StandardMaterial>)>,
     /// Normal material for start/root node.
     pub start_normal: Handle<StandardMaterial>,
     /// Glow material for selected start/root node.

@@ -634,17 +634,24 @@ impl GraphService {
         // Convert visited entities to nodes and fetch their references
         for id in &visited {
             if let Some(entry) = entity_cache.get(id) {
+                // Fetch full context for scope and references
+                let ctx = self.get_entity(id).await.ok();
+                let scope = ctx
+                    .as_ref()
+                    .and_then(|c| c.classifications.first())
+                    .map(|c| c.scope.clone());
+
                 // Add entity node
                 nodes.push(QueryGraphNode::Entity {
                     id: entry.entity.id.clone(),
                     name: entry.entity.name.clone(),
                     description: entry.entity.description.clone(),
-                    scope: None,
+                    scope,
                     relevance: entry.relevance,
                 });
 
-                // Fetch references for this entity
-                if let Ok(ctx) = self.get_entity(id).await {
+                // Add references from context
+                if let Some(ctx) = ctx {
                     for reference in ctx.references {
                         let (ref_id, doc_path, start_line, end_line, description) = match &reference
                         {
