@@ -350,17 +350,32 @@ pub fn update_selection_glow_system(
     for (graph_node, mut material) in node_query.iter_mut() {
         let should_glow = glowing_nodes.contains(&graph_node.node_idx);
 
-        let new_handle = if should_glow {
-            match layout.0.nodes.get(graph_node.node_idx).map(|n| n.node_type) {
-                Some(NodeType::Entity) => node_materials.entity_glow.clone(),
-                Some(NodeType::StartNode) => node_materials.start_glow.clone(),
-                None => continue,
+        let layout_node = match layout.0.nodes.get(graph_node.node_idx) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        let new_handle = match layout_node.node_type {
+            NodeType::StartNode => {
+                if should_glow {
+                    node_materials.start_glow.clone()
+                } else {
+                    node_materials.start_normal.clone()
+                }
             }
-        } else {
-            match layout.0.nodes.get(graph_node.node_idx).map(|n| n.node_type) {
-                Some(NodeType::Entity) => node_materials.entity_normal.clone(),
-                Some(NodeType::StartNode) => node_materials.start_normal.clone(),
-                None => continue,
+            NodeType::Entity => {
+                let scope_key = layout_node.scope.as_deref().unwrap_or("_DEFAULT");
+                let (normal, glow) = node_materials
+                    .scope_materials
+                    .get(scope_key)
+                    .or_else(|| node_materials.scope_materials.get("_DEFAULT"))
+                    .cloned()
+                    .unwrap();
+                if should_glow {
+                    glow
+                } else {
+                    normal
+                }
             }
         };
         *material = MeshMaterial3d(new_handle);

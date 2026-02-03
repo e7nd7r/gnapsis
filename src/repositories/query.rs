@@ -373,8 +373,11 @@ impl QueryRepository {
             .query(
                 "MATCH (start:Entity {id: $id})-[r]-(neighbor:Entity)
                  OPTIONAL MATCH (neighbor)-[:CLASSIFIED_AS]->(c:Category)
-                 RETURN DISTINCT neighbor, type(r) AS rel_type, c.name AS category,
-                        startNode(r).id AS from_id, endNode(r).id AS to_id",
+                 RETURN DISTINCT neighbor,
+                        CASE WHEN type(r) = 'LINK' THEN r.type ELSE type(r) END AS rel_type,
+                        c.name AS category,
+                        startNode(r).id AS from_id, endNode(r).id AS to_id,
+                        r.note AS note",
             )
             .param("id", id)
             .fetch_all()
@@ -399,12 +402,13 @@ impl QueryRepository {
             let rel_type: String = row.get("rel_type")?;
             let from_id: String = row.get("from_id")?;
             let to_id: String = row.get("to_id")?;
+            let note: Option<String> = row.get_opt("note")?;
 
             edges.push(SubgraphEdge {
                 from_id,
                 to_id,
                 relationship: rel_type,
-                note: None,
+                note,
             });
         }
 

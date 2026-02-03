@@ -35,6 +35,7 @@ pub struct CreateEntityParams {
     pub category_ids: Vec<String>,
     /// Parent entity IDs for BELONGS_TO relationships.
     /// Required for non-Domain scope entities.
+    /// Child scope must be deeper than parent's. Namespace and Component allow same-scope nesting.
     #[serde(default)]
     pub parent_ids: Vec<String>,
     /// Commands to execute. Must include at least one Add command.
@@ -60,6 +61,7 @@ pub struct UpdateEntityParams {
     #[serde(default)]
     pub category_ids: Option<Vec<String>>,
     /// Replace parent IDs (optional). Replaces all existing parents.
+    /// Validates scope hierarchy: child must be deeper than parent (Namespace/Component allow same-scope).
     #[serde(default)]
     pub parent_ids: Option<Vec<String>>,
     /// Commands to execute.
@@ -328,7 +330,9 @@ impl McpServer {
     ///
     /// Requires category_ids (non-empty) and at least one Add command.
     /// Non-Domain scope entities also require parent_ids.
-    #[tool(description = "Create a new entity with auto-embedding of description.")]
+    #[tool(
+        description = "Create a new entity with auto-embedding of description. Enforces scope hierarchy: child must be deeper than parent (Namespace and Component allow same-scope nesting)."
+    )]
     pub async fn create_entity(
         &self,
         Parameters(params): Parameters<CreateEntityParams>,
@@ -366,7 +370,9 @@ impl McpServer {
     ///
     /// If description changes, the embedding is regenerated.
     /// Categories and parents use replace semantics when provided.
-    #[tool(description = "Update an entity. Re-embeds if description changes.")]
+    #[tool(
+        description = "Update an entity. Re-embeds if description changes. Validates scope hierarchy if parents or categories change."
+    )]
     pub async fn update_entity(
         &self,
         Parameters(params): Parameters<UpdateEntityParams>,

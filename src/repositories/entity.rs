@@ -2,11 +2,21 @@
 
 use chrono::{DateTime, Utc};
 
+use std::str::FromStr;
+
 use crate::context::{AppGraph, Context};
 use crate::di::FromContext;
 use crate::error::AppError;
 use crate::graph::{Node, Row};
-use crate::models::Entity;
+use crate::models::{Entity, Scope};
+
+/// Check if child scope can belong to parent scope.
+///
+/// Valid when child is strictly deeper, or same depth for Namespace/Component.
+fn is_valid_scope_hierarchy(child_depth: i64, child_name: &str, parent_depth: i64) -> bool {
+    child_depth > parent_depth
+        || (child_depth == parent_depth && (child_name == "Namespace" || child_name == "Component"))
+}
 
 /// Repository for Entity CRUD operations and relationships.
 #[derive(FromContext, Clone)]
@@ -176,42 +186,92 @@ impl EntityRepository {
         Ok(())
     }
 
-    /// Validate that a BELONGS_TO relationship is valid (child scope depth > parent scope depth).
+    /// Validate scope hierarchy: child scope must be deeper than parent's.
+    ///
+    /// Allows same-scope nesting for Namespace and Component only.
+    /// Use this when the child entity doesn't exist yet (e.g., during creation).
+    pub async fn validate_scope_for_parent(
+        &self,
+        child_scope: &str,
+        parent_id: &str,
+    ) -> Result<(), AppError> {
+        let parent_info = self.get_entity_scope_info(parent_id).await?;
+
+        if let Some((parent_depth, _)) = parent_info {
+            let child_depth = Scope::from_str(child_scope)
+                .map_err(AppError::Validation)?
+                .depth() as i64;
+
+            if !is_valid_scope_hierarchy(child_depth, child_scope, parent_depth) {
+                return Err(AppError::InvalidBelongsTo {
+                    child: format!("(new {} entity)", child_scope),
+                    parent: parent_id.to_string(),
+                    reason: format!(
+                        "child scope depth ({}) must be greater than parent scope depth ({}) \
+                         (Namespace and Component allow same-scope nesting)",
+                        child_depth, parent_depth
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate that a BELONGS_TO relationship is valid between two existing entities.
+    ///
+    /// Delegates to the shared scope hierarchy rule.
     pub async fn validate_belongs_to(
         &self,
         child_id: &str,
         parent_id: &str,
     ) -> Result<(), AppError> {
-        let child_depth = self.get_entity_scope_depth(child_id).await?;
-        let parent_depth = self.get_entity_scope_depth(parent_id).await?;
+        let child_scope = self.get_entity_scope_info(child_id).await?;
+        let parent_scope = self.get_entity_scope_info(parent_id).await?;
 
-        match (child_depth, parent_depth) {
-            (Some(child), Some(parent)) if child <= parent => Err(AppError::InvalidBelongsTo {
-                child: child_id.to_string(),
-                parent: parent_id.to_string(),
-                reason: format!(
-                    "child scope depth ({}) must be greater than parent scope depth ({})",
-                    child, parent
-                ),
-            }),
-            _ => Ok(()),
+        if let (Some((child_depth, child_name)), Some((parent_depth, _))) =
+            (child_scope, parent_scope)
+        {
+            if !is_valid_scope_hierarchy(child_depth, &child_name, parent_depth) {
+                return Err(AppError::InvalidBelongsTo {
+                    child: child_id.to_string(),
+                    parent: parent_id.to_string(),
+                    reason: format!(
+                        "child scope depth ({}) must be greater than parent scope depth ({}) \
+                         (Namespace and Component allow same-scope nesting)",
+                        child_depth, parent_depth
+                    ),
+                });
+            }
         }
+
+        Ok(())
     }
 
-    /// Get the scope depth of an entity (via its classification).
-    async fn get_entity_scope_depth(&self, entity_id: &str) -> Result<Option<i64>, AppError> {
+    /// Get the scope depth and name of an entity (via its classification).
+    async fn get_entity_scope_info(
+        &self,
+        entity_id: &str,
+    ) -> Result<Option<(i64, String)>, AppError> {
         let row = self
             .graph
             .query(
                 "MATCH (e:Entity {id: $id})-[:CLASSIFIED_AS]->(:Category)-[:IN_SCOPE]->(s:Scope)
-                 RETURN s.depth AS depth",
+                 RETURN s.depth AS depth, s.name AS name",
             )
             .param("id", entity_id)
             .fetch_one()
             .await?;
 
         match row {
-            Some(row) => Ok(row.get_opt("depth")?),
+            Some(row) => {
+                let depth: Option<i64> = row.get_opt("depth")?;
+                let name: Option<String> = row.get_opt("name")?;
+                match (depth, name) {
+                    (Some(d), Some(n)) => Ok(Some((d, n))),
+                    _ => Ok(None),
+                }
+            }
             None => Ok(None),
         }
     }

@@ -55,6 +55,17 @@ pub struct EdgeHotspot {
     pub note: Option<String>,
 }
 
+/// Arrowhead cone showing edge direction.
+///
+/// Positioned near the target node to indicate relationship direction.
+#[derive(Component)]
+pub struct EdgeArrow {
+    /// Index of the source node.
+    pub from_idx: usize,
+    /// Index of the target node.
+    pub to_idx: usize,
+}
+
 /// Marker component for the info panel container.
 #[derive(Component)]
 pub struct InfoPanel;

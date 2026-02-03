@@ -112,13 +112,19 @@ validate_graph() → check integrity (orphans, cycles, missing refs)
 
 ## Scopes (hierarchy)
 
-Domain → Feature → Namespace → Component → Unit
+Domain(1) → Feature(2) → Namespace(3) → Component(4) → Unit(5)
 
 - **Domain**: Business domains (e.g., "Authentication")
 - **Feature**: Capabilities (e.g., "JWT Validation")
 - **Namespace**: Code modules (e.g., "services", "mcp::tools")
 - **Component**: Structs, classes, traits
 - **Unit**: Functions, methods, constants
+
+**BELONGS_TO rules** (enforced at creation and update time):
+- Child scope must be **deeper** than parent (e.g., Feature under Domain, Component under Namespace)
+- **Namespace** and **Component** allow same-scope nesting (e.g., namespace under namespace)
+- Domain, Feature, and Unit do **not** allow same-scope nesting
+- Non-Domain entities **require** at least one parent
 
 ## Entity Commands
 
